@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flat fallback used where adaptive icons are unavailable. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#0F0F0F"
+        android:pathData="M0,0 H108 V108 H0 Z" />
+    <path
+        android:fillColor="#FF0000"
+        android:pathData="M42,34 L42,74 L76,54 Z" />
+</vector>

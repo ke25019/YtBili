@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fallback for configurations that do not resolve the v26 adaptive icon.
+    Without this, AAPT fails to find `mipmap/ic_launcher` at link time.
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_legacy" />

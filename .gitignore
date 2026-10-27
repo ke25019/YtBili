@@ -1,0 +1,29 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/build-out
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.keystore
+!debug.keystore
+
+# Kotlin compiler diagnostics
+.kotlin/
+# Release staging output
+/dist/
+/releases/
+
+# Local handoff notes for the next agent — must never be published.
+# The canonical copy lives at H:\bilibili\AGI-HANDOFF.md, i.e. OUTSIDE this
+# repository, so it is structurally impossible to commit from here. These rules
+# are a second layer in case a copy ever lands inside the project tree.
+AGI-HANDOFF.md
+*HANDOFF*
+
