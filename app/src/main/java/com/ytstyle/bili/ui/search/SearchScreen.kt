@@ -2,8 +2,10 @@ package com.ytstyle.bili.ui.search
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,34 +20,42 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +72,7 @@ import com.ytstyle.bili.data.net.UserSearchItem
 import com.ytstyle.bili.ui.components.formatCount
 import com.ytstyle.bili.ui.components.parseDurationString
 import com.ytstyle.bili.ui.components.relativeTime
+import com.ytstyle.bili.ui.components.ThumbnailDuration
 import com.ytstyle.bili.ui.components.toSecureUrl
 import com.ytstyle.bili.ui.components.toThumbUrl
 import com.ytstyle.bili.ui.theme.AppTheme
@@ -78,6 +89,8 @@ fun SearchScreen(
     onBack: () -> Unit,
     onUserClick: (Long) -> Unit = {},
     onLiveClick: (Long) -> Unit = {},
+    /** 番剧 / 影视: the season id, played by this app's own player. */
+    onMediaClick: (Long) -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -100,9 +113,12 @@ fun SearchScreen(
                 CircularProgressIndicator(color = YtColors.Red)
             }
 
-            state.showHotwords -> HotwordList(
+            state.showHotwords -> SearchLanding(
+                history = state.history,
                 hotwords = state.hotwords.map { it.showName.ifBlank { it.keyword } },
                 onSelect = viewModel::onTermSelected,
+                onRemoveHistory = viewModel::removeHistory,
+                onClearHistory = viewModel::clearHistory,
             )
 
             state.showSuggestions -> SuggestionList(
@@ -137,6 +153,7 @@ fun SearchScreen(
                         onVideoClick = onVideoClick,
                         onUserClick = onUserClick,
                         onLiveClick = onLiveClick,
+                        onMediaClick = onMediaClick,
                         onSortChange = viewModel::onSortChange,
                         onDurationChange = viewModel::onDurationChange,
                     )
@@ -152,6 +169,7 @@ private fun PartitionResults(
     onVideoClick: (String) -> Unit,
     onUserClick: (Long) -> Unit,
     onLiveClick: (Long) -> Unit,
+    onMediaClick: (Long) -> Unit,
     onSortChange: (SortOption) -> Unit,
     onDurationChange: (DurationOption) -> Unit,
 ) {
@@ -174,7 +192,7 @@ private fun PartitionResults(
 
             SearchPartition.Bangumi, SearchPartition.Film ->
                 items(state.media, key = { it.mediaId }) { item ->
-                    MediaResultRow(item = item)
+                    MediaResultRow(item = item, onClick = { onMediaClick(item.seasonId) })
                 }
 
             SearchPartition.User -> items(state.users, key = { it.mid }) { item ->
@@ -255,58 +273,79 @@ private fun SearchBar(
             )
         }
 
-        TextField(
+        // A plain `BasicTextField` in a hand-built pill, **not** Material3's
+        // `TextField`.
+        //
+        // `TextField` wraps its input in a decoration box with a 56dp minimum
+        // height and 16dp of internal vertical padding. Constraining that to the
+        // 44dp this bar needs made the box taller than its container, so the
+        // text was drawn with its lower half cut off — typing showed "一 half of
+        // each glyph" and the placeholder was clipped horizontally too. Owning
+        // the layout removes the failure mode instead of tuning around it.
+        BasicTextField(
             value = query,
             onValueChange = onQueryChange,
-            // 44dp keeps the pill compact; the default TextField is 56dp, which
-            // read as an oversized bar.
-            modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(22.dp)),
-            placeholder = {
-                Text(
-                    "搜索视频、用户、专栏、直播",
-                    color = AppTheme.colors.onBackgroundSecondary,
-                    fontSize = 13.sp,
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = AppTheme.colors.onBackgroundSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
-            },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = onClear) {
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(AppTheme.colors.chipBackground),
+            textStyle = TextStyle(fontSize = 14.sp, color = AppTheme.colors.onBackground),
+            singleLine = true,
+            cursorBrush = SolidColor(YtColors.Red),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+            decorationBox = { innerTextField ->
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = AppTheme.colors.onBackgroundSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = "搜索视频、番剧、用户、直播",
+                                color = AppTheme.colors.onBackgroundSecondary,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                // Ellipsised rather than sliced in half when the
+                                // pill is narrow.
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        innerTextField()
+                    }
+                    if (query.isNotEmpty()) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "清除",
                             tint = AppTheme.colors.onBackgroundSecondary,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onClear),
                         )
                     }
                 }
             },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = AppTheme.colors.chipBackground,
-                unfocusedContainerColor = AppTheme.colors.chipBackground,
-                focusedTextColor = AppTheme.colors.onBackground,
-                unfocusedTextColor = AppTheme.colors.onBackground,
-                cursorColor = YtColors.Red,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
         )
 
         Text(
             text = "搜索",
-            color = YtColors.Red,
+            // Dimming the label is the only affordance that an empty query
+            // cannot be submitted, since the row is not a disabled button.
+            color = if (query.isBlank()) AppTheme.colors.onBackgroundSecondary else YtColors.Red,
             fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
+            fontSize = 15.sp,
             modifier = Modifier
                 .clickable(enabled = query.isNotBlank(), onClick = onSubmit)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -314,50 +353,191 @@ private fun SearchBar(
     }
 }
 
+/**
+ * The pre-search landing state: remembered terms on top, trending terms below,
+ * in one scrollable list so the two do not fight over the viewport.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun HotwordList(hotwords: List<String>, onSelect: (String) -> Unit) {
-    if (hotwords.isEmpty()) {
+private fun SearchLanding(
+    history: List<String>,
+    hotwords: List<String>,
+    onSelect: (String) -> Unit,
+    onRemoveHistory: (String) -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    if (history.isEmpty() && hotwords.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
             Text("输入关键词开始搜索", color = AppTheme.colors.onBackgroundSecondary)
         }
         return
     }
 
+    // Both dialogs are driven by local state: they are pure confirmations, so
+    // nothing needs to survive recomposition or reach the ViewModel.
+    var entryPendingDelete by remember { mutableStateOf<String?>(null) }
+    var showClearDialog by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        item {
-            Text(
-                text = "B 站热搜",
-                style = MaterialTheme.typography.titleMedium,
-                color = AppTheme.colors.onBackground,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            )
-        }
-        itemsIndexed(hotwords) { index, word ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(word) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "${index + 1}",
-                    color = if (index < 3) YtColors.Red else AppTheme.colors.onBackgroundSecondary,
-                    fontWeight = if (index < 3) FontWeight.Bold else FontWeight.Normal,
-                    fontSize = 14.sp,
-                    modifier = Modifier.width(28.dp),
-                )
-                Text(
-                    text = word,
-                    color = AppTheme.colors.onBackground,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        if (history.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "搜索历史",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = AppTheme.colors.onBackground,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "删除全部",
+                        color = AppTheme.colors.onBackgroundSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable { showClearDialog = true },
+                    )
+                }
             }
+            items(history) { entry ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { onSelect(entry) },
+                            onLongClick = { entryPendingDelete = entry },
+                        )
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.History,
+                        contentDescription = null,
+                        tint = AppTheme.colors.onBackgroundSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = entry,
+                        color = AppTheme.colors.onBackground,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "删除",
+                        tint = AppTheme.colors.onBackgroundSecondary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { onRemoveHistory(entry) },
+                    )
+                }
+            }
+        }
+
+        hotwordItems(hotwords = hotwords, onSelect = onSelect)
+    }
+
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            containerColor = AppTheme.colors.surfaceElevated,
+            title = { Text("清空搜索历史", color = AppTheme.colors.onBackground) },
+            text = {
+                Text(
+                    text = "将删除本机保存的全部搜索记录。",
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearDialog = false
+                    onClearHistory()
+                }) { Text("删除", color = YtColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text("取消", color = AppTheme.colors.onBackgroundSecondary)
+                }
+            },
+        )
+    }
+
+    entryPendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { entryPendingDelete = null },
+            containerColor = AppTheme.colors.surfaceElevated,
+            title = { Text("删除这条搜索记录？", color = AppTheme.colors.onBackground) },
+            text = {
+                Text(
+                    text = target,
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    entryPendingDelete = null
+                    onRemoveHistory(target)
+                }) { Text("删除", color = YtColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { entryPendingDelete = null }) {
+                    Text("取消", color = AppTheme.colors.onBackgroundSecondary)
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Emits the "B 站热搜" header and its rows into the caller's [LazyListScope]:
+ * a nested LazyColumn is not allowed, so the shared landing list needs the
+ * hot words as items rather than as their own list composable.
+ */
+private fun LazyListScope.hotwordItems(hotwords: List<String>, onSelect: (String) -> Unit) {
+    if (hotwords.isEmpty()) return
+
+    item {
+        Text(
+            text = "B 站热搜",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppTheme.colors.onBackground,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+    }
+    itemsIndexed(hotwords) { index, word ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(word) }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${index + 1}",
+                color = if (index < 3) YtColors.Red else AppTheme.colors.onBackgroundSecondary,
+                fontWeight = if (index < 3) FontWeight.Bold else FontWeight.Normal,
+                fontSize = 14.sp,
+                modifier = Modifier.width(28.dp),
+            )
+            Text(
+                text = word,
+                color = AppTheme.colors.onBackground,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -481,16 +661,12 @@ private fun ResultRow(
                 modifier = Modifier.fillMaxSize(),
             )
             if (!durationBadge.isNullOrEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xCC000000))
-                        .padding(horizontal = 5.dp, vertical = 2.dp),
-                ) {
-                    Text(text = durationBadge, color = Color.White, fontSize = 11.sp)
-                }
+                // Single-column result rows show the digits alone; see
+                // ThumbnailDuration for why the shadow stays.
+                ThumbnailDuration(
+                    text = durationBadge,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                )
             }
             trailingBadge?.let { badge ->
                 Box(modifier = Modifier.align(Alignment.TopStart).padding(4.dp)) { badge() }
@@ -543,20 +719,22 @@ private fun VideoResultRow(item: SearchResultItem, onClick: () -> Unit) {
 /**
  * A PGC entry (番剧 / 影视).
  *
- * Tapping opens the bangumi page in the browser: playing PGC content needs the
- * bangumi player and, for most titles, a membership, neither of which this
- * client implements. Showing the result and handing off is more honest than
- * routing it into the normal video player, where it would fail.
+ * Tapping plays it in this app's own player. The season id is what the PGC
+ * endpoints are keyed by; the browser hand-off is kept only as a fallback for
+ * the rare entry that carries no season id, because a result that cannot be
+ * played is still better than a dead row.
  */
 @Composable
-private fun MediaResultRow(item: MediaSearchItem) {
+private fun MediaResultRow(item: MediaSearchItem, onClick: () -> Unit) {
     val context = LocalContext.current
     ResultRow(
         thumbnail = item.cover,
         durationBadge = item.indexShow.ifEmpty { null },
         title = item.title.stripHighlight(),
         onClick = {
-            if (item.gotoUrl.isNotEmpty()) {
+            if (item.seasonId > 0) {
+                onClick()
+            } else if (item.gotoUrl.isNotEmpty()) {
                 runCatching {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.gotoUrl)))
                 }

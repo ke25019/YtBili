@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,12 +55,15 @@ import com.ytstyle.bili.ui.player.MEDIA_USER_AGENT
  * A WebView used for the few flows that are genuinely web-only: 投稿 (the upload
  * studio) and the message centre.
  *
- * Two things make this work at all:
+ * Three things make this work at all:
  *
  *  - **The session cookies are injected** into `CookieManager`, otherwise the
  *    page shows a logged-out studio.
- *  - **A desktop user agent is used**, because Bilibili's studio is desktop-only
- *    and serves a broken layout to mobile UAs.
+ *  - **A desktop user agent is used by default**, because Bilibili's studio is
+ *    desktop-only and serves a broken layout to mobile UAs. Callers that embed a
+ *    page which is mobile-friendly can opt out with [desktopUserAgent].
+ *  - **Bilibili's own site chrome is stripped** by a CSS reskin, so the page
+ *    reads as a screen of this app rather than a raw web page.
  *
  * Known limits, surfaced in the banner so nobody discovers them the hard way:
  * an upload can be interrupted by backgrounding the app and has no resume, and
@@ -71,6 +76,8 @@ fun InAppBrowserScreen(
     title: String,
     warning: String?,
     onBack: () -> Unit,
+    /** Bilibili's upload studio is desktop-only and serves a broken layout to mobile UAs. */
+    desktopUserAgent: Boolean = true,
     viewModel: InAppBrowserViewModel = hiltViewModel(),
 ) {
     val cookie by viewModel.cookie.collectAsStateWithLifecycle(initialValue = "")
@@ -78,6 +85,10 @@ fun InAppBrowserScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     var progress by remember { mutableStateOf(0) }
+
+    // The embedded page cannot read our theme, so the reskin has to be handed the
+    // current background colour: dark also flips a light page into the dark shell.
+    val dark = AppTheme.colors.background.luminance() < 0.5f
 
     // The studio's file picker has to be driven through a real activity result.
     val filePicker = rememberLauncherForActivityResult(
@@ -93,7 +104,14 @@ fun InAppBrowserScreen(
         if (view != null && view.canGoBack()) view.goBack() else onBack()
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(AppTheme.colors.background)) {
+    // The app draws edge to edge, so this screen's own bar has to clear the
+    // status bar itself.
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppTheme.colors.background)
+            .statusBarsPadding(),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -110,6 +128,17 @@ fun InAppBrowserScreen(
                 color = AppTheme.colors.onBackground,
                 fontWeight = FontWeight.Medium,
                 fontSize = 16.sp,
+            )
+        }
+
+        // A hairline marks the seam between our bar and the embedded page. The
+        // warning strip already provides that separation when it is shown.
+        if (warning == null) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(AppTheme.colors.divider),
             )
         }
 
@@ -150,8 +179,10 @@ fun InAppBrowserScreen(
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        // The studio is desktop-only.
-                        settings.userAgentString = MEDIA_USER_AGENT
+                        // The studio is desktop-only; pages that ship a real
+                        // mobile layout keep the WebView's own user agent.
+                        settings.userAgentString =
+                            if (desktopUserAgent) MEDIA_USER_AGENT else settings.userAgentString
 
                         // Seed the session so the studio is authenticated.
                         cookie.takeIf { it.isNotEmpty() }?.let { cookie ->
@@ -198,13 +229,26 @@ fun InAppBrowserScreen(
                                 val isWeb = url.startsWith("http://") || url.startsWith("https://")
                                 return !isWeb
                             }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                // Re-apply the reskin on every finished load: the
+                                // site replaces its own DOM on SPA navigations.
+                                view?.evaluateJavascript(reskinScript(dark), null)
+                            }
                         }
 
                         loadUrl(url)
                         webView = this
                     }
                 },
-                update = { webView = it },
+                update = { view ->
+                    webView = view
+                    // Injected on every update rather than only at progress 100:
+                    // the script replaces its own node, so repeated calls are
+                    // harmless, and this way a theme flip re-applies the right
+                    // colours even on an already-loaded page.
+                    view.evaluateJavascript(reskinScript(dark), null)
+                },
             )
 
             if (url.isEmpty()) {
@@ -214,4 +258,59 @@ fun InAppBrowserScreen(
             }
         }
     }
+}
+
+/** CSS that strips Bilibili's own site chrome so the page sits inside our shell. */
+private fun reskinScript(dark: Boolean): String {
+    val background = if (dark) "#0F0F0F" else "#FFFFFF"
+
+    val chromeCss = """
+        .bili-header, .bili-header__bar, .international-header, .mini-header, #biliMainHeader,
+        .bili-header__banner, .nav-mask, .link-navbar, .nav-bar, .m-navbar, .tab-bar,
+        .fixed-header, .message-navbar, .bili-footer, .international-footer, .footer,
+        .fixed-openapp, .openapp-btn, .ad-report, .pop-live-small, .lt-row, .header-bili,
+        .nav-link, .bili-dyn-header { display: none !important; }
+        html, body { background: $background !important; }
+        body { padding-top: 0 !important; margin-top: 0 !important; }
+        * { -webkit-tap-highlight-color: transparent !important; }
+        ::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+    """.trimIndent()
+
+    // A light page is inverted so it matches the dark shell; images and video are
+    // inverted back so they keep their real colours.
+    val darkCss = if (dark) {
+        """
+        html { filter: invert(1) hue-rotate(180deg); }
+        img, video, canvas, svg, [style*="background-image"] { filter: invert(1) hue-rotate(180deg); }
+        """.trimIndent()
+    } else {
+        ""
+    }
+
+    // The stylesheet travels inside a JS string literal, so it is flattened to one
+    // line and quotes are escaped.
+    val css = listOf(chromeCss, darkCss)
+        .filter { it.isNotEmpty() }
+        .joinToString("\n")
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", " ")
+
+    // Idempotent: any previous node is dropped before the new one is inserted, so
+    // this is safe to run on every load and every recomposition.
+    return """
+        (function () {
+            try {
+                var previous = document.getElementById('ytbili-reskin');
+                if (previous && previous.parentNode) { previous.parentNode.removeChild(previous); }
+                var style = document.createElement('style');
+                style.id = 'ytbili-reskin';
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode('$css'));
+                (document.head || document.documentElement).appendChild(style);
+                document.documentElement.style.background = '$background';
+                if (document.body) { document.body.style.background = '$background'; }
+            } catch (e) {}
+        })();
+    """.trimIndent()
 }

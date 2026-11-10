@@ -10,10 +10,38 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!--
+        In-app update: the APK is downloaded to the app's own external files dir
+        and handed to the system installer. Android still asks the user to allow
+        installs from this app (Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES), so
+        this is a request the user grants, not one the app can take.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!--
+        投屏: SSDP discovery needs a Wi-Fi multicast lock. Without it the Wi-Fi
+        stack filters multicast replies and the search silently finds no
+        devices, which looks exactly like "no TV on this network".
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!--
+        截图保存到相册. Android 10 (API 29) and up write through MediaStore with
+        no permission at all, so this is capped at 28 — the app never asks for
+        storage access it does not need.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
+    <!--
+        Cleartext stays permitted because DLNA needs it on the local network
+        (see res/xml/network_security_config.xml). Every Bilibili request is
+        HTTPS by construction: the API base is https and thumbnails are upgraded
+        by `toThumbUrl()`. (A comment cannot live inside a start tag — that is
+        invalid XML, and it cost a build.)
+    -->
     <application
         android:name=".YtBiliApp"
         android:allowBackup="true"
@@ -21,7 +49,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.YtBili"
         tools:targetApi="35">
@@ -61,6 +89,21 @@
             android:authorities="${applicationId}.androidx-startup"
             android:exported="false"
             tools:node="merge" />
+
+        <!--
+            Hands the log file to whichever app the user shares it to.
+            `exported` is false and the grant is per-URI, so nothing can read it
+            without the user picking a target.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>

@@ -1,6 +1,7 @@
 package com.ytstyle.bili
 
 import android.app.Application
+import com.ytstyle.bili.data.log.AppLog
 import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.session.SessionStore
 import dagger.hilt.android.HiltAndroidApp
@@ -21,6 +22,10 @@ class YtBiliApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // First, so everything after it — including a crash — lands in the file.
+        AppLog.init(this)
+        AppLog.installCrashHandler()
+
         // The OkHttp interceptor reads the cached cookies synchronously, so the
         // persisted session must be in memory before the first request fires.
         // buvid is then fetched once so early requests carry a fingerprint.

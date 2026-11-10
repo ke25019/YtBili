@@ -3,9 +3,11 @@ package com.ytstyle.bili.ui.login
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ytstyle.bili.data.auth.PasswordCrypto
+import com.ytstyle.bili.data.log.AppLog
 import com.ytstyle.bili.data.net.Geetest
 import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.repo.Result
+import com.ytstyle.bili.data.session.AccountStore
 import com.ytstyle.bili.data.session.SessionStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -71,6 +73,15 @@ data class LoginUiState(
     val geetest: Geetest? = null,
     val captchaToken: String = "",
     val error: String? = null,
+    /** Set while the challenge is being fetched or rendered. */
+    val isCaptchaLoading: Boolean = false,
+    /**
+     * A challenge that could not be presented, shown next to a retry button.
+     *
+     * Kept apart from [error] on purpose: [error] belongs to the credentials
+     * form, and mixing them sent the user out of the captcha stage.
+     */
+    val captchaError: String? = null,
     val isLoggedIn: Boolean = false,
     val oneTimeMessage: String? = null,
 ) {
@@ -96,6 +107,8 @@ data class LoginUiState(
 class LoginViewModel @Inject constructor(
     private val repository: BiliRepository,
     private val session: SessionStore,
+    /** Remembers the login so the account stays switchable-to later. */
+    private val accountStore: AccountStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LoginUiState())
@@ -105,6 +118,17 @@ class LoginViewModel @Inject constructor(
     private var captchaValidate: String = ""
     private var captchaSeccode: String = ""
     private var qrJob: Job? = null
+
+    /** Fires when the challenge never reports ready; see [CAPTCHA_TIMEOUT_MS]. */
+    private var captchaTimeoutJob: Job? = null
+
+    /**
+     * `captcha_key` handed back by `sms/send`. The login request must echo it,
+     * otherwise Bilibili cannot tie the code to the request that asked for it
+     * and answers `-400 参数错误`. Not storing it was one of the two reasons
+     * SMS login always failed.
+     */
+    private var smsCaptchaKey: String = ""
 
     /** Bilibili's reset page; opened in the browser as it is a multi-step flow. */
     val forgotPasswordUrl = "https://passport.bilibili.com/resetpwd"
@@ -246,6 +270,7 @@ class LoginViewModel @Inject constructor(
                         return@launch
                     }
                     session.saveProfile(nav.value.uname, nav.value.face)
+                    accountStore.remember(raw, nav.value.uname, nav.value.face)
                     val missingCsrf = !raw.contains("bili_jct=")
                     _state.update {
                         it.copy(
@@ -297,6 +322,7 @@ class LoginViewModel @Inject constructor(
                     tel = current.tel,
                     cid = current.countryCode,
                     code = current.smsCode,
+                    captchaKey = smsCaptchaKey,
                     token = current.captchaToken,
                     challenge = current.geetest?.challenge.orEmpty(),
                     validate = captchaValidate,
@@ -315,6 +341,11 @@ class LoginViewModel @Inject constructor(
 
     private fun fetchCaptchaThenContinue() {
         viewModelScope.launch {
+            // A Geetest `validate`/`seccode` pair is single-use. Carrying the
+            // previous attempt's values into the next request makes Bilibili
+            // answer "验证码错误" even though the user just solved a fresh one.
+            captchaValidate = ""
+            captchaSeccode = ""
             when (val result = repository.loginCaptcha()) {
                 is Result.Ok -> {
                     val captcha = result.value
@@ -325,12 +356,28 @@ class LoginViewModel @Inject constructor(
                         _state.update { it.copy(captchaToken = captcha.token) }
                         continueAfterCaptcha(captcha.token)
                     } else {
+                        // Logged so the challenge id can be matched against what
+                        // the WebView later reports.
+                        AppLog.i("login", "geetest challenge ${geetest.challenge.take(12)}… for ${_state.value.method}")
                         _state.update {
                             it.copy(
                                 stage = LoginStage.Captcha,
                                 geetest = geetest,
                                 captchaToken = captcha.token,
+                                isCaptchaLoading = true,
+                                captchaError = null,
                             )
+                        }
+                        // Sub-resource failures are deliberately no longer fatal,
+                        // so nothing else would ever tell the user that the
+                        // challenge is not coming. This is that backstop.
+                        captchaTimeoutJob?.cancel()
+                        captchaTimeoutJob = viewModelScope.launch {
+                            delay(CAPTCHA_TIMEOUT_MS)
+                            val current = _state.value
+                            if (current.isCaptchaLoading && current.stage == LoginStage.Captcha) {
+                                onCaptchaFailed("验证码在 ${CAPTCHA_TIMEOUT_MS / 1000} 秒内没有加载出来")
+                            }
                         }
                     }
                 }
@@ -345,15 +392,42 @@ class LoginViewModel @Inject constructor(
     }
 
     fun onCaptchaSolved(validate: String, seccode: String) {
+        captchaTimeoutJob?.cancel()
         captchaValidate = validate
         captchaSeccode = seccode
         _state.update { it.copy(stage = LoginStage.Submitting) }
         continueAfterCaptcha(_state.value.captchaToken)
     }
 
-    /** Called when the WebView reports that the challenge could not load. */
+    /**
+     * Called when the challenge genuinely could not be presented.
+     *
+     * The state stays on [LoginStage.Captcha] rather than falling back to the
+     * credentials form: the username and password are still in the state, so
+     * dropping out of the stage only forces the user to press the button again
+     * and re-answer a *new* challenge. Staying put lets them retry in place.
+     */
     fun onCaptchaFailed(message: String) {
-        failWith("验证码加载失败：$message（可改用扫码或 Cookie 登录）")
+        AppLog.w("login", "captcha failed: $message (method=${_state.value.method})")
+        _state.update { it.copy(captchaError = message, isCaptchaLoading = false) }
+    }
+
+    /** The challenge is on screen; the waiting state can end. */
+    fun onCaptchaReady() {
+        captchaTimeoutJob?.cancel()
+        _state.update { it.copy(captchaError = null, isCaptchaLoading = false) }
+    }
+
+    /**
+     * Fetches a fresh challenge and tries again.
+     *
+     * A Geetest challenge is single-use, so a retry must ask Bilibili for a new
+     * one rather than reloading the old page.
+     */
+    fun retryCaptcha() {
+        captchaTimeoutJob?.cancel()
+        _state.update { it.copy(captchaError = null, isCaptchaLoading = true) }
+        fetchCaptchaThenContinue()
     }
 
     private fun continueAfterCaptcha(token: String) {
@@ -390,6 +464,9 @@ class LoginViewModel @Inject constructor(
                 )
             ) {
                 is Result.Ok -> {
+                    // Echoed back on the login request; without it the login
+                    // POST is rejected as a malformed request.
+                    smsCaptchaKey = result.value.captchaKey
                     _state.update {
                         it.copy(
                             stage = LoginStage.AwaitingSmsCode,
@@ -484,9 +561,15 @@ class LoginViewModel @Inject constructor(
      * "登录失败" while the account was in fact signed in.
      */
     private suspend fun confirmSession() {
+        // Remember the cookie before anything else: the account has to stay
+        // switchable-to even if reading its profile fails right after.
+        val storedCookie = session.currentCookie()
+        if (storedCookie.isNotEmpty()) accountStore.remember(storedCookie)
+
         when (val nav = repository.nav()) {
             is Result.Ok -> {
                 session.saveProfile(nav.value.uname, nav.value.face)
+                accountStore.remember(storedCookie, nav.value.uname, nav.value.face)
                 _state.update {
                     it.copy(
                         stage = LoginStage.Done,
@@ -510,6 +593,9 @@ class LoginViewModel @Inject constructor(
     }
 
     private fun failWith(message: String) {
+        // Login failures are the hardest to diagnose from a screenshot because
+        // the same "参数错误" covers several causes; the code goes to the log.
+        AppLog.w("login", "failed: $message (method=${_state.value.method})")
         _state.update {
             it.copy(
                 stage = if (it.method == LoginMethod.Sms && it.smsCode.isNotEmpty()) {
@@ -528,5 +614,15 @@ class LoginViewModel @Inject constructor(
         const val RESEND_SECONDS = 60
         const val QR_POLL_INTERVAL_MS = 2_000L
         const val QR_MAX_POLLS = 90
+
+        /**
+         * How long to wait for the challenge to appear.
+         *
+         * Geetest's page pulls resources from several hosts and some are blocked
+         * by the browser; when it does manage to load, `onReady` fires within a
+         * couple of seconds. Twenty seconds is long enough for a slow network
+         * and short enough that a stuck screen is not mistaken for a hang.
+         */
+        const val CAPTCHA_TIMEOUT_MS = 20_000L
     }
 }

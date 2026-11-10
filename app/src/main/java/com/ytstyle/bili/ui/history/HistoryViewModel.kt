@@ -37,9 +37,13 @@ class HistoryViewModel @Inject constructor(
                 is Result.Ok -> _state.update {
                     // History includes non-video entries (articles, live rooms);
                     // only archive rows carry a bvid we can open in the player.
+                    //
+                    // `playableBvid`, not `bvid`: this payload keeps the id under
+                    // `history.bvid`, so filtering on the top-level field dropped
+                    // every single row and the screen always looked empty.
                     it.copy(
                         isLoading = false,
-                        items = result.value.list.filter { row -> row.bvid.isNotEmpty() },
+                        items = result.value.list.filter { row -> row.playableBvid.isNotEmpty() },
                     )
                 }
                 is Result.Err -> _state.update {

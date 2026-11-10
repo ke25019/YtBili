@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -170,8 +171,12 @@ fun LoginScreen(
                     CaptchaSection(
                         gt = gt.gt,
                         challenge = gt.challenge,
+                        loading = state.isCaptchaLoading,
+                        error = state.captchaError,
+                        onReady = viewModel::onCaptchaReady,
                         onSolved = viewModel::onCaptchaSolved,
                         onError = viewModel::onCaptchaFailed,
+                        onRetry = viewModel::retryCaptcha,
                         onCancel = viewModel::cancelCaptcha,
                     )
                 }
@@ -574,8 +579,12 @@ private fun SmsFields(
 private fun CaptchaSection(
     gt: String,
     challenge: String,
+    loading: Boolean,
+    error: String?,
+    onReady: () -> Unit,
     onSolved: (String, String) -> Unit,
     onError: (String) -> Unit,
+    onRetry: () -> Unit,
     onCancel: () -> Unit,
 ) {
     Column(
@@ -593,6 +602,14 @@ private fun CaptchaSection(
                 fontSize = 14.sp,
             )
             Spacer(Modifier.weight(1f))
+            if (loading && error == null) {
+                CircularProgressIndicator(
+                    color = YtColors.Red,
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             Text(
                 text = "取消",
                 color = AppTheme.colors.onBackgroundSecondary,
@@ -601,15 +618,70 @@ private fun CaptchaSection(
             )
         }
         Spacer(Modifier.height(8.dp))
-        GeetestCaptcha(
-            gt = gt,
-            challenge = challenge,
-            onSuccess = onSolved,
-            onError = onError,
-        )
+
+        if (error == null) {
+            GeetestCaptcha(
+                gt = gt,
+                challenge = challenge,
+                onReady = onReady,
+                onSuccess = onSolved,
+                onError = onError,
+            )
+        } else {
+            // In place, with a retry: the credentials are still filled in, so
+            // throwing the user back to the form only makes them press the
+            // button again and solve a fresh challenge.
+            Column(
+                modifier = Modifier.fillMaxWidth().height(140.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "验证码加载失败",
+                    color = AppTheme.colors.onBackground,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = error,
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(YtColors.Red)
+                            .clickable(onClick = onRetry)
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                    ) {
+                        Text(text = "重试", color = Color.White, fontSize = 13.sp)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(AppTheme.colors.chipBackground)
+                            .clickable(onClick = onCancel)
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = "改用扫码登录",
+                            color = AppTheme.colors.onBackground,
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "加载不出来时，可改用扫码或 Cookie 登录。",
+            text = "验证码由哔哩哔哩提供。若长时间加载不出来，可改用扫码或 Cookie 登录。",
             color = AppTheme.colors.onBackgroundSecondary,
             fontSize = 11.sp,
         )

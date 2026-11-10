@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,12 +40,36 @@ import com.ytstyle.bili.ui.theme.YtColors
 fun FavoritesScreen(
     onVideoClick: (String) -> Unit,
     onBack: () -> Unit,
+    onFollowClick: () -> Unit = {},
     viewModel: FavoritesViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize().background(AppTheme.colors.background)) {
         SimpleTopBar(title = "我的收藏", onBack = onBack)
+
+        // 追更 lives behind this screen rather than in the bottom bar: it is a
+        // "things I am following" list, which is what this screen already is.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onFollowClick)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "追更",
+                color = AppTheme.colors.onBackground,
+                fontSize = 15.sp,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = "›",
+                color = AppTheme.colors.onBackgroundSecondary,
+                fontSize = 18.sp,
+            )
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppTheme.colors.divider))
 
         // Folder selector, YouTube-playlist style.
         if (state.folders.size > 1) {
@@ -94,7 +120,9 @@ fun FavoritesScreen(
                         title = media.title,
                         thumbnailUrl = media.cover,
                         uploaderName = media.upper?.name.orEmpty(),
-                        viewCount = 0,
+                        // Reads `cnt_info.play`; the stat object the feed uses
+                        // does not exist on favourites rows.
+                        viewCount = media.cntInfo?.playCount ?: 0L,
                         durationSeconds = media.duration,
                         // Media rows store `id` as aid or bvid depending on type;
                         // only type 2 (video) rows are openable here.

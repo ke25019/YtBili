@@ -57,14 +57,20 @@ fun HistoryScreen(
             }
 
             else -> LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
-                items(state.items, key = { it.bvid.ifEmpty { it.title } }) { item ->
+                // Keyed and navigated on `playableBvid`: the id is nested under
+                // `history` on this endpoint, so the top-level field is blank and
+                // every row used to key to its own title instead.
+                items(state.items, key = { it.playableBvid.ifEmpty { it.title } }) { item ->
                     VideoRow(
                         title = item.title,
                         thumbnailUrl = item.cover,
                         uploaderName = item.author_name,
                         viewCount = 0,
                         durationSeconds = item.duration,
-                        onClick = { if (item.bvid.isNotEmpty()) onVideoClick(item.bvid) },
+                        onClick = {
+                            val bvid = item.playableBvid
+                            if (bvid.isNotEmpty()) onVideoClick(bvid)
+                        },
                     )
                 }
             }

@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cleartext is permitted, and it is a deliberate trade.
+
+    Everything the app sends to Bilibili stays on HTTPS — that is enforced in
+    the code (thumbnails are upgraded by `toThumbUrl()`, the API base is https),
+    not by this policy. What the policy *was* blocking is DLNA: a television's
+    device description and its SOAP control endpoint are plain `http://` on the
+    local network, by protocol, and there is no way to express "any private IP
+    range" in a network security config (only named domains). With cleartext off
+    the cast feature failed with `UnknownServiceException` on every device it
+    discovered.
+
+    `trust-anchors` still pins TLS to the system store, so no user-installed CA
+    can intercept the app's HTTPS traffic.
+-->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

@@ -50,3 +50,34 @@ object FlexibleTextSerializer : KSerializer<String> {
         encoder.encodeString(value)
     }
 }
+
+/**
+ * Reads a flag that Bilibili sends as a real boolean, as `0`/`1`, or as the
+ * string `"0"`/`"1"` depending on the endpoint.
+ *
+ * This matters for `x/web-interface/archive/relation`, whose `like` field
+ * decides whether the 点赞 button starts filled. Declaring it as a strict
+ * `Boolean` means an `Int` payload throws, the whole response is discarded, and
+ * the button silently reports "not liked" forever — one of the ways "点了点赞但
+ * 是 ui 没有变化" can happen. A tolerant reader removes the guesswork.
+ */
+object FlexibleBooleanSerializer : KSerializer<Boolean> {
+
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("FlexibleBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return decoder.decodeBoolean()
+        val primitive = jsonDecoder.decodeJsonElement() as? JsonPrimitive ?: return false
+        // `content` handles true/false, 0/1 and the quoted forms of both.
+        return when (primitive.content.trim().lowercase()) {
+            "true", "1" -> true
+            else -> false
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}

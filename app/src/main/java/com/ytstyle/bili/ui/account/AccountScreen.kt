@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -36,14 +38,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.ytstyle.bili.ui.components.toThumbUrl
 import com.ytstyle.bili.ui.theme.VipPink
 import com.ytstyle.bili.ui.theme.YtColors
 
@@ -55,8 +58,17 @@ import com.ytstyle.bili.ui.theme.YtColors
  * the rest of the domestic client's commercial entries. Only the membership
  * centre is kept, per the requested scope.
  */
+/**
+ * The account tab.
+ *
+ * It takes the shell's [AccountUiState] rather than resolving a view model of
+ * its own: a second instance scoped to this navigation entry was why this
+ * screen and the top bar could disagree about whether anybody was signed in.
+ */
 @Composable
 fun AccountScreen(
+    state: AccountUiState,
+    onDismissNotice: () -> Unit,
     onLoginClick: () -> Unit,
     onVipClick: () -> Unit,
     onHistoryClick: () -> Unit,
@@ -64,14 +76,14 @@ fun AccountScreen(
     onUploadClick: () -> Unit,
     onSettingsClick: () -> Unit = {},
     onWatchLaterClick: () -> Unit = {},
-    viewModel: AccountViewModel = hiltViewModel(),
+    onDownloadsClick: () -> Unit = {},
+    /** Opens one's own space; the avatar and the name both lead there. */
+    onOpenSpace: (Long) -> Unit = {},
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-
     LaunchedEffect(state.notice) {
         if (state.notice != null) {
             kotlinx.coroutines.delay(4000)
-            viewModel.dismissNotice()
+            onDismissNotice()
         }
     }
 
@@ -84,6 +96,7 @@ fun AccountScreen(
         ProfileHeader(
             state = state,
             onLoginClick = onLoginClick,
+            onOpenSpace = { if (state.mid > 0) onOpenSpace(state.mid) },
         )
 
         if (state.isLoggedIn) {
@@ -96,31 +109,23 @@ fun AccountScreen(
         Spacer(Modifier.height(16.dp))
         HorizontalDivider()
 
-        AccountRow(
-            icon = Icons.Filled.WorkspacePremium,
-            title = if (state.isVip) "大会员中心" else "开通大会员",
-            subtitle = state.vipLabel.ifEmpty { "会员权益 · 卡券 · 订单" },
-            tint = VipPink,
-            onClick = onVipClick,
+        // 观看记录 / 我的收藏 / 稍后再看 / 离线缓存 are one 资源库 section now,
+        // drawn as large cover cards rather than four identical text rows.
+        LibrarySection(
+            covers = state.libraryCovers,
+            onOpen = { entry ->
+                when (entry) {
+                    LibraryEntry.History -> onHistoryClick()
+                    LibraryEntry.Favorites -> onFavoritesClick()
+                    LibraryEntry.WatchLater -> onWatchLaterClick()
+                    LibraryEntry.Downloads -> onDownloadsClick()
+                }
+            },
         )
-        AccountRow(
-            icon = Icons.Filled.History,
-            title = "观看记录",
-            subtitle = "继续观看与历史",
-            onClick = onHistoryClick,
-        )
-        AccountRow(
-            icon = Icons.Filled.Star,
-            title = "我的收藏",
-            subtitle = "收藏夹与订阅",
-            onClick = onFavoritesClick,
-        )
-        AccountRow(
-            icon = Icons.Filled.WatchLater,
-            title = "稍后再看",
-            subtitle = "待观看列表",
-            onClick = onWatchLaterClick,
-        )
+
+        // The 大会员 entry was removed on request. `onVipClick` and the VIP
+        // route are kept so the screen stays reachable if it is ever wired back
+        // (and so nothing else has to change to restore the row).
         AccountRow(
             icon = Icons.Filled.CloudUpload,
             title = "投稿管理",
@@ -149,8 +154,119 @@ fun AccountScreen(
     }
 }
 
+/**
+ * 资源库: the four local lists, as large cover cards.
+ *
+ * Laid out as two explicit rows rather than a lazy grid — a second lazy
+ * container inside this screen's `verticalScroll` column would be measured with
+ * infinite height and crash.
+ */
 @Composable
-private fun ProfileHeader(state: AccountUiState, onLoginClick: () -> Unit) {
+private fun LibrarySection(
+    covers: Map<LibraryEntry, String>,
+    onOpen: (LibraryEntry) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "资源库",
+            color = AppTheme.colors.onBackground,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(10.dp))
+        LibraryEntry.entries.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { entry ->
+                    LibraryCard(
+                        entry = entry,
+                        cover = covers[entry].orEmpty(),
+                        modifier = Modifier.weight(1f),
+                        onClick = { onOpen(entry) },
+                    )
+                }
+                // Keeps a lone card half-width instead of stretching it.
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun LibraryCard(
+    entry: LibraryEntry,
+    cover: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppTheme.colors.surfaceElevated)
+            .clickable(onClick = onClick),
+    ) {
+        if (cover.isNotBlank()) {
+            AsyncImage(
+                model = cover.toThumbUrl(),
+                contentDescription = entry.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            // No cover known for this entry yet — an icon panel is honest about
+            // that in a way a blank grey rectangle is not.
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = entry.icon,
+                    contentDescription = null,
+                    tint = YtColors.Red,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000))),
+                )
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+        ) {
+            Text(
+                text = entry.title,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Text(
+                text = entry.subtitle,
+                color = Color(0xCCFFFFFF),
+                fontSize = 10.sp,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** The icon each 资源库 card falls back to when it has no cover. */
+private val LibraryEntry.icon: ImageVector
+    get() = when (this) {
+        LibraryEntry.History -> Icons.Filled.History
+        LibraryEntry.Favorites -> Icons.Filled.Star
+        LibraryEntry.WatchLater -> Icons.Filled.WatchLater
+        LibraryEntry.Downloads -> Icons.Filled.Download
+    }
+
+@Composable
+private fun ProfileHeader(
+    state: AccountUiState,
+    onLoginClick: () -> Unit,
+    onOpenSpace: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -158,11 +274,15 @@ private fun ProfileHeader(state: AccountUiState, onLoginClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
+            // Signed in, this opens one's own space; signed out it still starts
+            // the login flow, which is the only useful action either way.
             modifier = Modifier
                 .size(64.dp)
                 .clip(CircleShape)
                 .background(AppTheme.colors.surfaceElevated)
-                .clickable(enabled = !state.isLoggedIn, onClick = onLoginClick),
+                .clickable(
+                    onClick = { if (state.isLoggedIn) onOpenSpace() else onLoginClick() },
+                ),
         ) {
             if (state.avatarUrl.isNotEmpty()) {
                 AsyncImage(
@@ -175,7 +295,11 @@ private fun ProfileHeader(state: AccountUiState, onLoginClick: () -> Unit) {
 
         Spacer(Modifier.width(16.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(enabled = state.isLoggedIn, onClick = onOpenSpace),
+        ) {
             if (state.isLoggedIn) {
                 Text(
                     text = state.uname,

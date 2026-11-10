@@ -1,5 +1,6 @@
 package com.ytstyle.bili.data.net
 
+import com.ytstyle.bili.data.log.AppLog
 import com.ytstyle.bili.data.session.SessionStore
 import dagger.Module
 import dagger.Provides
@@ -62,10 +63,34 @@ object NetworkModule {
         cookieCapture: CookieCapture,
     ): Interceptor = Interceptor { chain ->
         val original = chain.request()
+        val host = original.url.host
+
+        // Each host family checks where the request came from, so the Referer is
+        // chosen per site rather than forced to the video site's:
+        //
+        //  - Login lives on `passport.bilibili.com`, and sending the video site's
+        //    Referer there is one way credential logins come back as a
+        //    parameter/risk-control error while the same body works from the
+        //    passport page itself.
+        //  - The live APIs (`api.live.bilibili.com`) reject requests carrying
+        //    `www.bilibili.com` with `code = -352 风控校验失败` — confirmed from a
+        //    device log, where every `getDanmuInfo` returned HTTP 200 with -352
+        //    and the danmaku socket therefore never authenticated.
+        val sameSite = when {
+            host.endsWith("passport.bilibili.com") -> "https://passport.bilibili.com"
+            host.endsWith("live.bilibili.com") -> "https://live.bilibili.com"
+            else -> "https://www.bilibili.com"
+        }
+        val referer = if (sameSite.endsWith("passport.bilibili.com")) {
+            "$sameSite/login"
+        } else {
+            "$sameSite/"
+        }
+
         val builder = original.newBuilder()
             .header("User-Agent", USER_AGENT)
-            .header("Referer", REFERER)
-            .header("Origin", "https://www.bilibili.com")
+            .header("Referer", referer)
+            .header("Origin", sameSite)
             .header("Accept", "application/json, text/plain, */*")
 
         // Login session plus the buvid device fingerprint. Both are needed:
@@ -75,7 +100,32 @@ object NetworkModule {
             builder.header("Cookie", cookie)
         }
 
-        val response = chain.proceed(builder.build())
+        // Logged as method + path + status only. The query string is dropped on
+        // purpose: Bilibili's carries signatures and tokens, and the log is
+        // meant to be shareable.
+        val startedAt = System.currentTimeMillis()
+        val response = try {
+            chain.proceed(builder.build())
+        } catch (e: Exception) {
+            AppLog.e(
+                "http",
+                "${original.method} ${original.url.encodedPath} failed after " +
+                    "${System.currentTimeMillis() - startedAt}ms",
+                e,
+            )
+            throw e
+        }
+
+        val elapsed = System.currentTimeMillis() - startedAt
+        val line = "${original.method} ${original.url.encodedPath} -> " +
+            "${response.code} (${elapsed}ms)"
+        if (response.isSuccessful) {
+            AppLog.d("http", line)
+        } else {
+            // HTTP-level failures are worth keeping even in release builds.
+            AppLog.w("http", line)
+        }
+
         cookieCapture.absorb(response.headers("Set-Cookie"))
         response
     }

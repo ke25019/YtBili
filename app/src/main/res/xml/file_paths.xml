@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Exposed directories, and only to apps the user explicitly shares to: the
+    diagnostic log that can be exported, the landscape player's screenshots, the
+    cache folder the image viewer stages a picture in before sharing it, and the
+    update APK that is handed to the system installer (which is a separate app
+    and therefore needs a granted URI too). Nothing else in the app's private
+    storage is reachable through this provider.
+-->
+<paths>
+    <files-path
+        name="logs"
+        path="logs/" />
+    <files-path
+        name="screenshots"
+        path="screenshots/" />
+    <cache-path
+        name="shared_images"
+        path="images/" />
+    <external-files-path
+        name="updates"
+        path="Download/" />
+</paths>

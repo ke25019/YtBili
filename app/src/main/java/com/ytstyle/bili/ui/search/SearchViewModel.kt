@@ -12,6 +12,7 @@ import com.ytstyle.bili.data.net.UserSearchItem
 import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.repo.Result
 import com.ytstyle.bili.data.repo.SearchOrder
+import com.ytstyle.bili.data.search.SearchHistoryStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -63,6 +64,8 @@ enum class DurationOption(val value: Int, val label: String) {
 data class SearchUiState(
     val query: String = "",
     val hotwords: List<HotwordItem> = emptyList(),
+    /** Locally remembered search terms, newest first. */
+    val history: List<String> = emptyList(),
     val suggestions: List<SuggestTag> = emptyList(),
     val partition: SearchPartition = SearchPartition.Video,
 
@@ -96,6 +99,10 @@ data class SearchUiState(
     val showHotwords: Boolean
         get() = !hasSearched && query.isBlank()
 
+    /** The history block replaces the empty landing state only before any search. */
+    val showHistory: Boolean
+        get() = !hasSearched && query.isBlank() && history.isNotEmpty()
+
     /** Sort and length filters only apply to video search. */
     val showFilters: Boolean
         get() = partition == SearchPartition.Video
@@ -104,6 +111,7 @@ data class SearchUiState(
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val repository: BiliRepository,
+    private val historyStore: SearchHistoryStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SearchUiState())
@@ -113,6 +121,9 @@ class SearchViewModel @Inject constructor(
 
     init {
         loadHotwords()
+        viewModelScope.launch {
+            historyStore.history.collect { list -> _state.update { it.copy(history = list) } }
+        }
     }
 
     private fun loadHotwords() {
@@ -162,6 +173,10 @@ class SearchViewModel @Inject constructor(
     fun search() {
         val keyword = _state.value.query.trim()
         if (keyword.isEmpty()) return
+
+        // Every real run lands in the history; re-running for another partition
+        // or sort simply moves the same term back to the top, which is wanted.
+        viewModelScope.launch { historyStore.record(keyword) }
 
         _state.update {
             it.copy(
@@ -258,9 +273,21 @@ class SearchViewModel @Inject constructor(
         if (_state.value.hasSearched) search()
     }
 
+    fun removeHistory(query: String) {
+        viewModelScope.launch { historyStore.remove(query) }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch { historyStore.clear() }
+    }
+
     fun clear() {
         suggestJob?.cancel()
-        _state.value = SearchUiState(hotwords = _state.value.hotwords)
+        // Hot words and history outlive the query, so carry them into the reset.
+        _state.value = SearchUiState(
+            hotwords = _state.value.hotwords,
+            history = _state.value.history,
+        )
     }
 
     private companion object {

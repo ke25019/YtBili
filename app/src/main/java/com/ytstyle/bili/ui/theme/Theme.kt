@@ -22,6 +22,12 @@ private val DarkScheme = darkColorScheme(
     surfaceVariant = YtColors.SurfaceElevated,
     onSurfaceVariant = YtColors.OnBackgroundSecondary,
     outline = YtColors.Divider,
+    // Dialogs are the one place that asks for a container tone explicitly (the
+    // update dialog uses `surfaceContainerHigh`, the M3 name for it). Left unset
+    // it falls back to the M3 baseline — a purple-tinted grey that clashes with
+    // this palette — so it is pinned to the app's own raised surface.
+    surfaceContainerHigh = YtColors.ChipBackground,
+    outlineVariant = YtColors.Divider,
 )
 
 private val LightScheme = lightColorScheme(
@@ -34,6 +40,8 @@ private val LightScheme = lightColorScheme(
     surfaceVariant = YtColors.LightSurfaceElevated,
     onSurfaceVariant = YtColors.LightOnBackgroundSecondary,
     outline = YtColors.LightDivider,
+    surfaceContainerHigh = Color(0xFFEFEFEF),
+    outlineVariant = YtColors.LightDivider,
 )
 
 /**

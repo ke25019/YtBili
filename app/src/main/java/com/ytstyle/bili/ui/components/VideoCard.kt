@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -76,6 +78,9 @@ fun VideoCard(
             )
             DurationBadge(
                 seconds = durationSeconds,
+                // Grid cells keep the pill: a small thumbnail has no room for
+                // text that has to stay readable over an arbitrary picture.
+                plain = !compact,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp),
@@ -163,6 +168,7 @@ fun VideoRow(
             )
             DurationBadge(
                 seconds = durationSeconds,
+                plain = true,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
             )
         }
@@ -190,20 +196,64 @@ fun VideoRow(
 }
 
 @Composable
-private fun DurationBadge(seconds: Int, modifier: Modifier = Modifier) {
+private fun DurationBadge(
+    seconds: Int,
+    modifier: Modifier = Modifier,
+    /** Single-column rows drop the pill and show the digits alone. */
+    plain: Boolean = false,
+) {
     if (seconds <= 0) return
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xCC000000))
-            .padding(horizontal = 5.dp, vertical = 2.dp),
-    ) {
+    ThumbnailDuration(
+        text = formatDuration(seconds),
+        plain = plain,
+        modifier = modifier,
+        fontSize = 12,
+    )
+}
+
+/**
+ * Duration (or any short label) drawn over a thumbnail.
+ *
+ * [plain] is the single-column presentation: no black pill, just the text. A
+ * soft shadow is kept so white digits survive a bright frame — without it the
+ * label disappears against a white sky, which is exactly the frame a duration
+ * badge tends to sit on.
+ */
+@Composable
+fun ThumbnailDuration(
+    text: String,
+    modifier: Modifier = Modifier,
+    plain: Boolean = true,
+    fontSize: Int = 11,
+) {
+    if (text.isEmpty()) return
+    if (plain) {
         Text(
-            text = formatDuration(seconds),
+            text = text,
             color = Color.White,
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            style = TextStyle(
+                shadow = Shadow(color = Color(0x99000000), blurRadius = 4f),
+            ),
+            modifier = modifier,
         )
+    } else {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xCC000000))
+                .padding(horizontal = 5.dp, vertical = 2.dp),
+        ) {
+            Text(
+                text = text,
+                color = Color.White,
+                fontSize = fontSize.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -278,19 +328,33 @@ fun String.toThumbUrl(): String {
     val secure = when {
         startsWith("//") -> "https:$this"
         startsWith("http://") -> "https://" + removePrefix("http://")
-        else -> this
+        contains("://") -> this
+        // Bare path, the same shape the space header arrives in. Without this
+        // the size suffix below would be glued onto a relative reference, which
+        // no image loader can resolve.
+        else -> "https://i0.hdslb.com/" + removePrefix("/")
     }
     return if (secure.contains("@")) secure else "$secure@480w_270h_1c.webp"
 }
 
 /**
- * Scheme-only normalisation for images that must keep their native aspect
- * (avatars). Prefer [toThumbUrl] for thumbnails, which also requests a size.
+ * Makes an image reference absolute, and HTTPS.
+ *
+ * Images that must keep their native aspect (avatars, the space header) use
+ * this rather than [toThumbUrl], which also requests a size.
+ *
+ * The bare-path branch is load-bearing: Bilibili returns the space header as
+ * `bfs/space/….png` with no scheme and no host (`top_photo`, confirmed in the
+ * captured `x/space/wbi/acc/info` payload). Returning that unchanged — which is
+ * what this used to do — hands the image loader a relative reference, so the
+ * header silently never appeared.
  */
 fun String.toSecureUrl(): String = when {
+    isBlank() -> this
     startsWith("//") -> "https:$this"
     startsWith("http://") -> "https://" + removePrefix("http://")
-    else -> this
+    contains("://") -> this
+    else -> "https://i0.hdslb.com/" + removePrefix("/")
 }
 
 /** Convenience for rendering either feed type with one card. */

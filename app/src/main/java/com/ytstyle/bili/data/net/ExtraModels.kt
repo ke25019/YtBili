@@ -153,6 +153,17 @@ data class SpaceProfile(
     val official: SpaceOfficial? = null,
     val vip: SpaceVip? = null,
     @SerialName("live_room") val liveRoom: SpaceLiveRoom? = null,
+    /**
+     * Space header image.
+     *
+     * The captured `x/space/wbi/acc/info` payload carries it as a **bare path**
+     * (`bfs/space/cb1c3e….png`), not a URL — so anything that feeds it straight
+     * to an image loader gets a relative reference that can never resolve, which
+     * is why the banner appeared simply not to load. For a 装扮 owner this is
+     * the decorated header, so the same field covers both cases.
+     */
+    @SerialName("top_photo") val topPhoto: String = "",
+    @SerialName("ip_location") val ipLocation: String = "",
 )
 
 @Serializable
@@ -215,6 +226,62 @@ data class LiveRoomInfo(
     @SerialName("user_cover") val userCover: String = "",
     val tags: String = "",
 )
+
+/**
+ * `xlive/web-room/v1/index/getDanmuInfo` — the credentials for the live
+ * message queue: a token plus the servers that accept it.
+ *
+ * Public rooms answer this while signed out; Bilibili then masks other users'
+ * names and mids in the stream, which is why the app sends its session cookie.
+ */
+@Serializable
+data class LiveDanmuInfo(
+    val token: String = "",
+    @SerialName("host_list") val hostList: List<LiveDanmuHost> = emptyList(),
+)
+
+@Serializable
+data class LiveDanmuHost(
+    val host: String = "",
+    /** WSS port; the WS port is unusable from an app without cleartext access. */
+    @SerialName("wss_port") val wssPort: Int = 443,
+    @SerialName("ws_port") val wsPort: Int = 2244,
+    val port: Int = 2243,
+)
+
+/**
+ * `room/v1/Danmu/getConf` — the legacy 弹幕服务器 endpoint, and the one that works.
+ *
+ * `xlive/web-room/v1/index/getDanmuInfo` now answers `-352 风控校验失败` to every
+ * request shape tried: bare referer, referer with the room path, `web_location`,
+ * a full browser header set, and each of those with `buvid3`/`buvid4` cookies.
+ * The app's own on-device log shows the same three consecutive `-352`s, so it is
+ * not a device or account problem.
+ *
+ * This older endpoint still returns a usable token, and that was verified end to
+ * end rather than assumed: the token authenticates over WSS (an `op 8`
+ * `{"code":0}` reply) and the queue then delivers live messages.
+ *
+ * Two shape differences from the modern endpoint: the servers are
+ * `host_server_list` here rather than `host_list`, and there is a region-less
+ * `host` fallback for when that list comes back empty.
+ */
+@Serializable
+data class LiveDanmuConf(
+    val token: String = "",
+    @SerialName("host_server_list") val hostServerList: List<LiveDanmuHost> = emptyList(),
+    /** e.g. `broadcastlv.chat.bilibili.com` — used when the list is absent. */
+    val host: String = "",
+    val port: Int = 2243,
+) {
+    /** The servers to try, falling back to the single region-less host. */
+    val hosts: List<LiveDanmuHost>
+        get() = hostServerList.ifEmpty {
+            host.takeIf { it.isNotBlank() }
+                ?.let { listOf(LiveDanmuHost(host = it, port = port)) }
+                .orEmpty()
+        }
+}
 
 @Serializable
 data class LivePlayData(
@@ -309,6 +376,15 @@ data class WatchLaterData(
     val list: List<WatchLaterItem> = emptyList(),
 )
 
+/**
+ * One row of 稍后再看.
+ *
+ * `viewed` and `progress` are deliberately **not** modelled: the UI renders
+ * neither, and they are the two fields on this endpoint that Bilibili has been
+ * seen to send as strings rather than numbers. A strict `Int` there fails the
+ * deserialization of the whole list, which is one way a non-empty list comes
+ * back looking empty.
+ */
 @Serializable
 data class WatchLaterItem(
     val aid: Long = 0,
@@ -321,9 +397,6 @@ data class WatchLaterItem(
     val pubdate: Long = 0,
     val owner: Owner? = null,
     val stat: Stat? = null,
-    /** 1 when already watched. */
-    @SerialName("viewed") val viewed: Int = 0,
-    @SerialName("progress") val progress: Int = -1,
 )
 
 // ---------------------------------------------------------------------------

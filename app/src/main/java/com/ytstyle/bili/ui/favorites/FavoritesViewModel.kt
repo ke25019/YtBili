@@ -80,6 +80,13 @@ class FavoritesViewModel @Inject constructor(
      * bvid. Resolve it through the view endpoint before navigating.
      */
     fun openMedia(media: FavResource, onResolved: (String) -> Unit) {
+        // Recent payloads carry the bvid on the row itself, which is one fewer
+        // request per tap; the aid lookup stays as the fallback.
+        val direct = media.bvid.ifBlank { media.bvId }
+        if (direct.isNotEmpty()) {
+            onResolved(direct)
+            return
+        }
         viewModelScope.launch {
             when (val detail = repository.viewDetailByAid(media.id)) {
                 is Result.Ok -> onResolved(detail.value.bvid)
