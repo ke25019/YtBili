@@ -9,6 +9,7 @@ import com.ytstyle.bili.data.settings.AudioPreference
 import com.ytstyle.bili.data.settings.AutoplayMode
 import com.ytstyle.bili.data.settings.SettingsStore
 import com.ytstyle.bili.data.settings.ThemeMode
+import com.ytstyle.bili.data.update.UpdateChannel
 import com.ytstyle.bili.ui.player.DanmakuMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,6 +62,19 @@ class SettingsViewModel @Inject constructor(
     /** Whether the app checks for updates by itself at launch. */
     val autoUpdate: StateFlow<Boolean> = settings.autoUpdate
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    /**
+     * Which releases the updater may offer.
+     *
+     * The other update axis, the build type, is fixed by the installed package
+     * and is therefore not a setting.
+     */
+    val updateChannel: StateFlow<UpdateChannel> = settings.updateChannel
+        .stateIn(viewModelScope, SharingStarted.Eagerly, UpdateChannel.Stable)
+
+    fun setUpdateChannel(channel: UpdateChannel) {
+        viewModelScope.launch { settings.setUpdateChannel(channel) }
+    }
 
     fun setAutoUpdate(enabled: Boolean) {
         viewModelScope.launch { settings.setAutoUpdate(enabled) }

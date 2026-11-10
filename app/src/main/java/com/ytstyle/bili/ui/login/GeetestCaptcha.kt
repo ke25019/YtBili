@@ -184,24 +184,44 @@ private fun buildCaptchaHtml(gt: String, challenge: String): String = """
     }
     window.onerror = function (m) { reportError(m); };
 
+    var captchaReady = false;
+
+    // A white box with no explanation is the worst outcome: if nothing has been
+    // rendered after six seconds, say so instead of leaving the user waiting.
+    setTimeout(function () {
+      if (captchaReady) return;
+      var box = document.getElementById('captcha');
+      if (!box || box.children.length === 0) {
+        reportError('验证码加载超时，可改用扫码或 Cookie 登录');
+      }
+    }, 6000);
+
     if (typeof initGeetest4 !== 'function') {
       reportError('gt4.js 未能加载');
     } else {
       initGeetest4({
-        gt: '$gt',
+        // v4's parameter is `captchaId`; passing v3's `gt` made the SDK request
+        // /load without a captcha_id, which the service answers with HTTP 403 —
+        // the blank challenge in the logs.
+        captchaId: '$gt',
         challenge: '$challenge',
-        product: 'bind',
+        // `float` renders the challenge inline. `bind` waits for a separate
+        // trigger element that this page never provides, so it reported "ready"
+        // while drawing nothing.
+        product: 'float',
         lang: 'zh-cn'
       }, function (captcha) {
         // onReady fires once the challenge is actually on screen, which is what
         // tells the app the wait is over.
         if (captcha.onReady) {
           captcha.onReady(function () {
+            captchaReady = true;
             try { window.DroidBridge.onReady(); } catch (e) {}
           });
         }
         captcha.appendTo('#captcha');
         captcha.onSuccess(function () {
+          captchaReady = true;
           var result = captcha.getValidate() || {};
           var validate = JSON.stringify(result);
           window.DroidBridge.onSuccess(validate, validate + '|jordan');

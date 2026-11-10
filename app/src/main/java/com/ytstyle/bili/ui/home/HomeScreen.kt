@@ -96,8 +96,40 @@ fun HomeScreen(
     // back stack, which is when the user comes back to a partition.
     val listStates = remember { mutableMapOf<Int?, LazyListState>() }
     val gridStates = remember { mutableMapOf<Int?, LazyGridState>() }
-    val listState = listStates.getOrPut(state.selectedRid) { LazyListState() }
-    val gridState = gridStates.getOrPut(state.selectedRid) { LazyGridState() }
+    // Seeded from the view model, which outlives this composition: opening a
+    // video disposes the screen, and without this the rebuilt list started at
+    // item 0 — the "back from a video lands at the top" report.
+    val listState = listStates.getOrPut(state.selectedRid) {
+        val saved = viewModel.savedScroll(state.selectedRid, grid = false)
+        LazyListState(saved?.first ?: 0, saved?.second ?: 0)
+    }
+    val gridState = gridStates.getOrPut(state.selectedRid) {
+        val saved = viewModel.savedScroll(state.selectedRid, grid = true)
+        LazyGridState(saved?.first ?: 0, saved?.second ?: 0)
+    }
+
+    // Park the position before the state is thrown away, and whenever the
+    // selected partition changes under us.
+    DisposableEffect(listState, state.selectedRid) {
+        onDispose {
+            viewModel.rememberScroll(
+                state.selectedRid,
+                grid = false,
+                index = listState.firstVisibleItemIndex,
+                offset = listState.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+    DisposableEffect(gridState, state.selectedRid) {
+        onDispose {
+            viewModel.rememberScroll(
+                state.selectedRid,
+                grid = true,
+                index = gridState.firstVisibleItemIndex,
+                offset = gridState.firstVisibleItemScrollOffset,
+            )
+        }
+    }
 
     // Scroll direction for the shell's landscape chrome.
     //

@@ -98,8 +98,14 @@ android {
         // player lists and switches cached videos (portrait list + landscape
         // 选集), and the landscape 截图/锁定 buttons are back. Version chosen by
         // the user.
-        versionCode = 26
-        versionName = "1.13.3"
+        //
+        // 1.13.4-beta: update channels are back as a preference (Stable / Beta,
+        // persisted, independent of the build type), the APK inside a release is
+        // matched to the installed package and never substituted, and the
+        // offline player's landscape chrome was tidied. Version chosen by the
+        // user.
+        versionCode = 27
+        versionName = "1.13.4-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

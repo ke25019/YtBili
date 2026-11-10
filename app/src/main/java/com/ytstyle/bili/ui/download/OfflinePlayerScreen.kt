@@ -5,10 +5,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -58,6 +58,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import com.ytstyle.bili.ui.player.OrientationUprightEffect
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -150,25 +151,51 @@ private fun OfflinePlayerContent(
     var aspect by remember { mutableStateOf(16f / 9f) }
     /** Set by the fullscreen button; a physically rotated window counts too. */
     var isFullscreen by remember { mutableStateOf(false) }
+    /**
+     * Set by the landscape exit arrow: keep the window portrait until the device
+     * is upright again. Same rule as the streaming player, and for the same
+     * reason — releasing it as soon as the window is portrait lets auto-rotate
+     * turn it straight back.
+     */
+    var exitLandscapeRequested by remember { mutableStateOf(false) }
     /** The landscape 选集 panel: the other cached videos to jump to. */
     var pickerOpen by remember { mutableStateOf(false) }
     val windowLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val landscape = isFullscreen || windowLandscape
+    val landscape = !exitLandscapeRequested && (isFullscreen || windowLandscape)
+
+    // Leaving landscape is a layout change, not leaving the video.
+    BackHandler(enabled = landscape) {
+        isFullscreen = false
+        exitLandscapeRequested = true
+    }
+
+    OrientationUprightEffect(enabled = exitLandscapeRequested) {
+        exitLandscapeRequested = false
+    }
 
     // Same rotation and system-bar handling as the streaming player: entering
     // landscape means asking for the sensor orientation and hiding the bars,
     // leaving it restores both.
-    DisposableEffect(landscape) {
+    DisposableEffect(isFullscreen, exitLandscapeRequested) {
         val controller = activity?.let {
             WindowCompat.getInsetsController(it.window, it.window.decorView)
         }
-        if (landscape) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            controller?.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            controller?.show(WindowInsetsCompat.Type.systemBars())
+        when {
+            isFullscreen -> {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                controller?.hide(WindowInsetsCompat.Type.systemBars())
+            }
+
+            exitLandscapeRequested -> {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                controller?.show(WindowInsetsCompat.Type.systemBars())
+            }
+
+            else -> {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                controller?.show(WindowInsetsCompat.Type.systemBars())
+            }
         }
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -314,6 +341,29 @@ private fun OfflinePlayerContent(
                 }
             }
 
+            // Landscape exit sits at the top-left, like the streaming player's.
+            // It leaves landscape, not the video — the title bar's back is what
+            // leaves the video, and that only exists in portrait.
+            if (landscape && chromeVisible) {
+                IconButton(
+                    onClick = {
+                        isFullscreen = false
+                        exitLandscapeRequested = true
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .size(36.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "退出横屏",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+
             if (chromeVisible) {
                 Column(
                     modifier = Modifier
@@ -390,24 +440,14 @@ private fun OfflinePlayerContent(
                                 )
                             }
                         }
-                        IconButton(onClick = { isFullscreen = !isFullscreen }) {
-                            Icon(
-                                imageVector = if (landscape) {
-                                    Icons.Filled.FullscreenExit
-                                } else {
-                                    Icons.Filled.Fullscreen
-                                },
-                                contentDescription = if (landscape) "退出横屏" else "横屏播放",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
-                        // Landscape has no title bar, so the way back lives here.
-                        if (landscape) {
-                            IconButton(onClick = onBack) {
+                        // Landscape has neither of these any more: the way out
+                        // is the top-left arrow, and the fullscreen toggle only
+                        // exists in portrait, where it is the way in.
+                        if (!landscape) {
+                            IconButton(onClick = { isFullscreen = true }) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "返回",
+                                    imageVector = Icons.Filled.Fullscreen,
+                                    contentDescription = "横屏播放",
                                     tint = Color.White,
                                     modifier = Modifier.size(22.dp),
                                 )

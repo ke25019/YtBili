@@ -128,6 +128,23 @@ class HomeViewModel @Inject constructor(
      */
     private val feedCache = mutableMapOf<Int?, CachedFeed>()
 
+    /**
+     * Where each partition's list was left, keyed by (`rid`, grid layout).
+     *
+     * The composable owns the real `LazyListState`s, but it leaves composition
+     * when a video opens, so those states are disposed with it and the return
+     * trip used to land back at the top of the feed. The position is therefore
+     * parked here — the view model outlives the screen while it sits in the back
+     * stack — and handed back when the list is rebuilt.
+     */
+    private val scrollMemory = mutableMapOf<Pair<Int?, Boolean>, Pair<Int, Int>>()
+
+    fun savedScroll(rid: Int?, grid: Boolean): Pair<Int, Int>? = scrollMemory[rid to grid]
+
+    fun rememberScroll(rid: Int?, grid: Boolean, index: Int, offset: Int) {
+        scrollMemory[rid to grid] = index to offset
+    }
+
     /** One partition's remembered feed, cursor and all. */
     private class CachedFeed(
         val items: List<RecommendItem>,

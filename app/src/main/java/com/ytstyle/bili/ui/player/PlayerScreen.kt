@@ -212,11 +212,13 @@ fun PlayerScreen(
         isFullscreen ||
             (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && !inPip)
         )
-    // Once the window really is portrait again, stop forcing it.
-    LaunchedEffect(configuration.orientation) {
-        if (configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
-            exitLandscapeRequested = false
-        }
+    // Release the portrait pin only once the *device* is upright again.
+    //
+    // Releasing it the moment the window reported portrait was the bug behind
+    // "the exit arrow does nothing" on auto-rotate: the phone is still sideways,
+    // so the sensor rotates the window straight back to landscape.
+    OrientationUprightEffect(enabled = exitLandscapeRequested) {
+        exitLandscapeRequested = false
     }
     /**
      * Landscape lock. While it is on, a tap no longer reveals the chrome and

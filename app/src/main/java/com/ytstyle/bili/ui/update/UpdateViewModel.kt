@@ -9,6 +9,7 @@ import com.ytstyle.bili.data.settings.SettingsStore
 import com.ytstyle.bili.data.update.ApkDownloader
 import com.ytstyle.bili.data.update.ApkInstaller
 import com.ytstyle.bili.data.update.GitHubRelease
+import com.ytstyle.bili.data.update.UpdateChannel
 import com.ytstyle.bili.data.update.UpdateChecker
 import com.ytstyle.bili.data.update.UpdateResult
 import com.ytstyle.bili.data.update.VersionTag
@@ -39,6 +40,8 @@ data class UpdateUiState(
     val notice: String? = null,
     val noticeIsError: Boolean = false,
     val autoUpdate: Boolean = true,
+    /** The channel the current check ran on; shown in the dialog title. */
+    val channel: UpdateChannel = UpdateChannel.Stable,
 ) {
     /** The version line in the title: `发现新版本 v1.13.0`. */
     val titleVersion: String
@@ -80,7 +83,9 @@ class UpdateViewModel @Inject constructor(
             // A DataStore read can fail (corrupt file, no disk); the launch check
             // must then err on the side of checking, not on the side of silence.
             val auto = runCatching { settings.autoUpdate.first() }.getOrDefault(true)
-            _state.update { it.copy(autoUpdate = auto) }
+            val channel = runCatching { settings.updateChannel.first() }
+                .getOrDefault(UpdateChannel.Stable)
+            _state.update { it.copy(autoUpdate = auto, channel = channel) }
         }
     }
 
@@ -95,8 +100,14 @@ class UpdateViewModel @Inject constructor(
         viewModelScope.launch {
             val current = _state.value
             if (!current.autoUpdate) return@launch
-            _state.update { it.copy(checking = true, notice = null) }
-            when (val result = checker.check(currentVersion = current.currentVersion)) {
+            // Read the channel from its source of truth rather than from [current]:
+            // the init block's read may not have landed yet on a cold start.
+            val channel = runCatching { settings.updateChannel.first() }
+                .getOrDefault(current.channel)
+            _state.update { it.copy(checking = true, notice = null, channel = channel) }
+            when (
+                val result = checker.check(currentVersion = current.currentVersion, channel = channel)
+            ) {
                 is UpdateResult.Available -> _state.update {
                     it.copy(
                         checking = false,
@@ -107,8 +118,11 @@ class UpdateViewModel @Inject constructor(
                         noticeIsError = false,
                     )
                 }
-                // Silent: nothing to tell the user at launch.
+                // Silent: nothing to tell the user at launch, including "this
+                // channel has no release at all" — that would open a dialog on
+                // every start for anyone on Stable while only Betas exist.
                 is UpdateResult.UpToDate,
+                is UpdateResult.NoReleaseInChannel,
                 is UpdateResult.Failed,
                 -> _state.update { it.copy(checking = false) }
             }
@@ -120,10 +134,21 @@ class UpdateViewModel @Inject constructor(
         if (_state.value.checking || _state.value.downloading) return
         viewModelScope.launch {
             val current = _state.value
+            val channel = runCatching { settings.updateChannel.first() }
+                .getOrDefault(current.channel)
             _state.update {
-                it.copy(visible = true, checking = true, release = null, version = null, notice = null)
+                it.copy(
+                    visible = true,
+                    checking = true,
+                    release = null,
+                    version = null,
+                    notice = null,
+                    channel = channel,
+                )
             }
-            when (val result = checker.check(currentVersion = current.currentVersion)) {
+            when (
+                val result = checker.check(currentVersion = current.currentVersion, channel = channel)
+            ) {
                 is UpdateResult.Available -> _state.update {
                     it.copy(
                         checking = false,
@@ -142,11 +167,56 @@ class UpdateViewModel @Inject constructor(
                     )
                 }
 
+                is UpdateResult.NoReleaseInChannel -> _state.update {
+                    it.copy(
+                        checking = false,
+                        release = null,
+                        notice = if (result.channel == UpdateChannel.Stable) {
+                            "稳定版渠道暂无可用版本。当前发布的都是测试版，可在设置里切换渠道。"
+                        } else {
+                            "测试版渠道暂无可用版本。"
+                        },
+                        noticeIsError = false,
+                    )
+                }
+
                 is UpdateResult.Failed -> _state.update {
                     it.copy(checking = false, notice = result.message, noticeIsError = true)
                 }
             }
         }
+    }
+
+    /**
+     * The channel selector: persist the choice, then forget the offer that
+     * belonged to the previous channel.
+     *
+     * Deliberately does **not** download, install or even re-check: switching a
+     * preference must never start a network transfer, and silently checking
+     * again would pop the dialog while the user is still in Settings. The next
+     * explicit 检查更新 (or the next launch) uses the new channel.
+     */
+    fun setChannel(channel: UpdateChannel) {
+        if (_state.value.channel == channel && _state.value.release == null) {
+            // Still persist: the setting may have been changed elsewhere.
+            viewModelScope.launch { settings.setUpdateChannel(channel) }
+            return
+        }
+        _state.update {
+            it.copy(
+                channel = channel,
+                visible = false,
+                checking = false,
+                release = null,
+                version = null,
+                downloading = false,
+                progress = null,
+                downloadedApk = null,
+                notice = null,
+                noticeIsError = false,
+            )
+        }
+        viewModelScope.launch { settings.setUpdateChannel(channel) }
     }
 
     /** The dialog's 关闭自动更新: stop the silent startup check from now on. */

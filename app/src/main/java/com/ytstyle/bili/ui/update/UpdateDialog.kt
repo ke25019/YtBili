@@ -70,7 +70,12 @@ fun UpdateDialog(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
-                    text = state.release?.let { "发现新版本 v${state.titleVersion}" } ?: "检查更新",
+                    text = state.release?.let {
+                        // The channel is part of the identity of the build being
+                        // offered, so it belongs on the title line, not only in
+                        // Settings where it was chosen.
+                        "发现新版本 v${state.titleVersion} · ${state.channel.label}"
+                    } ?: "检查更新",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,

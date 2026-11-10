@@ -4,6 +4,24 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
+ * Which stream of releases this app follows.
+ *
+ * Deliberately independent of the build type. Debug and release are two package
+ * names decided at build time and cannot be switched at runtime; the channel is
+ * the user's choice, stored in preferences. The two dimensions never mix: the
+ * channel decides *which release*, the build type decides *which APK inside it*.
+ */
+enum class UpdateChannel(val id: String, val label: String) {
+    Stable("stable", "稳定版"),
+    Beta("beta", "测试版");
+
+    companion object {
+        /** Unknown or missing ids fall back to [Stable], the shipped default. */
+        fun fromId(id: String?): UpdateChannel = entries.firstOrNull { it.id == id } ?: Stable
+    }
+}
+
+/**
  * One entry of GitHub's `repos/{owner}/{repo}/releases` list.
  *
  * Only the fields the update dialog needs are declared; the response carries a
@@ -24,17 +42,44 @@ data class GitHubRelease(
     /**
      * The APK to install: the one matching the **installed build type**.
      *
-     * Each release is published with both, and they are signed with different
-     * keys, so a debug build has to take the debug APK and a release build the
-     * release one — offering the other is an install that Android refuses. When
-     * only one is attached, whichever exists is used rather than nothing.
+     * Null when the release does not carry that variant. There is deliberately
+     * no "fall back to whatever APK is attached": the two variants have
+     * different package names, so handing a debug build the release APK does not
+     * update it, it installs a second app, and handing a release build the debug
+     * APK does the same. Refusing is the only correct answer.
      */
-    fun apkUrl(forDebugBuild: Boolean): String? {
-        val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
-        if (apks.isEmpty()) return null
-        val wanted = apks.filter { it.name.contains("debug", ignoreCase = true) == forDebugBuild }
-        return (wanted.ifEmpty { apks }).maxByOrNull { it.size }?.browserDownloadUrl
-    }
+    fun apkUrl(forDebugBuild: Boolean): String? =
+        assets.asSequence()
+            .filter { it.isApk }
+            .filter { it.isDebugApk == forDebugBuild }
+            .maxByOrNull { it.size }
+            ?.browserDownloadUrl
+
+    /**
+     * True when either the tag or the release title marks this as a pre-release.
+     *
+     * Both are checked because the repository's history is inconsistent: older
+     * versions carry `-beta` only in the tag, 1.13.0 carries it only in the
+     * title, and GitHub's own `prerelease` flag is false for every release ever
+     * published here.
+     */
+    private val markedAsPrerelease: Boolean
+        get() = PRERELEASE_MARKERS.containsMatchIn(tagName) ||
+            PRERELEASE_MARKERS.containsMatchIn(name)
+
+    /** The channel this release belongs to. */
+    val channel: UpdateChannel
+        get() = if (markedAsPrerelease || prerelease) UpdateChannel.Beta else UpdateChannel.Stable
+
+    /**
+     * GitHub says "pre-release" but neither the tag nor the title says so.
+     *
+     * That combination is what a mis-ticked publish produces; the release still
+     * goes to Beta (the flag is the stronger signal), but it is worth a log line
+     * because it means the metadata disagrees with itself.
+     */
+    val prereleaseFlagOnly: Boolean
+        get() = prerelease && !markedAsPrerelease
 
     /** Convenience for the "查看详情" button. */
     val pageUrl: String
@@ -50,14 +95,22 @@ data class GitHubAsset(
     val name: String = "",
     @SerialName("browser_download_url") val browserDownloadUrl: String = "",
     val size: Long = 0,
-)
+    /** `sha256:…` when GitHub provides one; empty on older uploads. */
+    val digest: String = "",
+) {
+    val isApk: Boolean get() = name.endsWith(".apk", ignoreCase = true)
+
+    /** `YtBili-1.13.3-debug.apk` → true, `…-release.apk` → false. */
+    val isDebugApk: Boolean get() = name.contains("debug", ignoreCase = true)
+}
 
 /**
  * The numeric part of a version, parsed out of a tag like `v1.13.0` or
  * `1.12.4-beta`.
  *
- * Only the leading `major.minor.patch` is compared. A suffix is what makes a tag
- * a pre-release, and that is a separate question — see [isPreReleaseTag].
+ * Only the leading `major.minor.patch` is compared. The channel is a separate
+ * axis and is applied by filtering before any comparison happens, so a
+ * pre-release never has to be ordered against a stable build here.
  */
 data class VersionTag(
     val major: Int,
@@ -90,12 +143,12 @@ data class VersionTag(
 }
 
 /**
- * True for `v1.13.0-beta`, `v1.13.0-rc1`, `v1.13.0-alpha.2` and the like.
+ * True for `v1.13.0-beta`, `v1.13.0-rc1`, `v1.13.3-alpha.2` and the like.
  *
- * Kept for the release-body/report side: the app no longer has update channels,
- * so a beta tag is no longer filtered out — it is simply reported as such.
+ * Anchored on the dash rather than a word boundary: versions carry suffixes
+ * like `-rc1`, where `rc` is followed by a digit and a `\b` would not match.
  */
-fun isPreReleaseTag(tag: String): Boolean =
-    PRE_RELEASE_PATTERN.containsMatchIn(tag)
+fun isPreReleaseTag(tag: String): Boolean = PRERELEASE_MARKERS.containsMatchIn(tag)
 
-private val PRE_RELEASE_PATTERN = Regex("""-(beta|alpha|rc|nightly|dev)""", RegexOption.IGNORE_CASE)
+private val PRERELEASE_MARKERS =
+    Regex("""-(beta|alpha|rc|nightly|dev|preview)""", RegexOption.IGNORE_CASE)

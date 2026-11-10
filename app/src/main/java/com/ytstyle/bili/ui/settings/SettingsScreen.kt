@@ -58,6 +58,7 @@ import com.ytstyle.bili.data.net.NetworkStatus
 import com.ytstyle.bili.data.settings.AudioPreference
 import com.ytstyle.bili.data.settings.AutoplayMode
 import com.ytstyle.bili.data.settings.ThemeMode
+import com.ytstyle.bili.data.update.UpdateChannel
 import com.ytstyle.bili.ui.player.DanmakuMode
 import com.ytstyle.bili.ui.player.DanmakuSettingsPanel
 import com.ytstyle.bili.ui.player.Quality
@@ -140,6 +141,7 @@ fun SettingsScreen(
     val savedAccounts by viewModel.savedAccounts.collectAsStateWithLifecycle()
     val activeMid by viewModel.activeMid.collectAsStateWithLifecycle()
     val autoUpdate by viewModel.autoUpdate.collectAsStateWithLifecycle()
+    val updateChannel by viewModel.updateChannel.collectAsStateWithLifecycle()
 
     // Sampled when the page opens: the user is here to change a preference, and
     // a live subscription would only add a moving label to a settings screen.
@@ -474,6 +476,27 @@ fun SettingsScreen(
 
                     Spacer(Modifier.height(16.dp))
                     SectionTitle("更新")
+                    Text(
+                        text = "更新渠道",
+                        color = AppTheme.colors.onBackground,
+                        fontSize = 14.sp,
+                    )
+                    Text(
+                        text = "稳定版只收正式版，测试版包含标记为 beta 的版本。" +
+                            "切换渠道不会自动下载或安装。",
+                        color = AppTheme.colors.onBackgroundSecondary,
+                        fontSize = 12.sp,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    UpdateChannel.entries.forEach { option ->
+                        PickRow(
+                            label = option.label,
+                            selected = option == updateChannel,
+                            onClick = { viewModel.setUpdateChannel(option) },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Spacer(Modifier.height(6.dp))
                     SwitchRow(
                         "自动更新",
                         if (autoUpdate) {

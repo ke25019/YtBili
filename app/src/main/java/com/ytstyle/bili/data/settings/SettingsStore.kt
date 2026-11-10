@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.ytstyle.bili.data.update.UpdateChannel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -115,8 +116,9 @@ class SettingsStore @Inject constructor(
         val DEFAULT_QUALITY = stringPreferencesKey("default_quality")
         val AUDIO_PREFERENCE = stringPreferencesKey("audio_preference")
 
-        // 应用内更新: whether to check on launch.
+        // 应用内更新: whether to check on launch, and which channel to follow.
         val AUTO_UPDATE = booleanPreferencesKey("auto_update")
+        val UPDATE_CHANNEL = stringPreferencesKey("update_channel")
     }
 
     /**
@@ -243,5 +245,18 @@ class SettingsStore @Inject constructor(
 
     suspend fun setAutoUpdate(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.AUTO_UPDATE] = enabled }
+    }
+
+    /**
+     * Which release channel the updater follows. Defaults to [UpdateChannel.Stable].
+     *
+     * A separate axis from the build type: switching this changes which releases
+     * are offered, never which package is installed or how it is signed.
+     */
+    val updateChannel: Flow<UpdateChannel> =
+        context.settingsDataStore.data.map { UpdateChannel.fromId(it[Keys.UPDATE_CHANNEL]) }
+
+    suspend fun setUpdateChannel(channel: UpdateChannel) {
+        context.settingsDataStore.edit { it[Keys.UPDATE_CHANNEL] = channel.id }
     }
 }
