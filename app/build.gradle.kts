@@ -109,8 +109,12 @@ android {
         // system bars (icon tint and visibility, re-applied on resume), partition
         // refresh that actually brings new uploads, and the 图文动态 reading
         // page. Version chosen by the user.
-        versionCode = 28
-        versionName = "1.13.5-beta"
+        //
+        // 1.13.6-beta: a partition's feed now starts from its newest uploads
+        // (paginated) instead of the ranking snapshot, and 个人主页's 图文 and
+        // dynamic rows open the reader. Version chosen by the user.
+        versionCode = 29
+        versionName = "1.13.6-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

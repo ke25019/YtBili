@@ -109,6 +109,8 @@ fun SpaceScreen(
     onOpenRelation: (Long, RelationTab) -> Unit = { _, _ -> },
     /** Opens a 追番 season in the player as `ss<seasonId>`. */
     onSeasonClick: (Long) -> Unit = {},
+    /** Opens one 图文动态 in the full reader. */
+    onOpenDetail: (DynamicEntry) -> Unit = {},
     viewModel: SpaceViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -153,6 +155,7 @@ fun SpaceScreen(
                 onEditProfile = onEditProfile,
                 onOpenRelation = onOpenRelation,
                 onSeasonClick = onSeasonClick,
+                onOpenDetail = onOpenDetail,
             )
 
             state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -250,6 +253,7 @@ private fun SpaceBody(
     onEditProfile: () -> Unit,
     onOpenRelation: (Long, RelationTab) -> Unit,
     onSeasonClick: (Long) -> Unit,
+    onOpenDetail: (DynamicEntry) -> Unit,
 ) {
     val videoCount = state.videosTotal.takeIf { it > 0 } ?: state.videos.size
 
@@ -288,7 +292,7 @@ private fun SpaceBody(
                             onMore = { onSelectTab(SpaceTab.Dynamics) },
                         )
                     }
-                    item { IllustratedRow(state.illustrated.take(HomeIllustratedPreview)) }
+                    item { IllustratedRow(state.illustrated.take(HomeIllustratedPreview), onOpenDetail) }
                 }
                 if (state.folders.isNotEmpty()) {
                     item {
@@ -348,7 +352,7 @@ private fun SpaceBody(
                 if (state.dynamics.isEmpty()) {
                     EmptyHint("暂无公开动态")
                 } else {
-                    DynamicsList(state.dynamics, onVideoClick)
+                    DynamicsList(state.dynamics, onVideoClick, onOpenDetail)
                 }
             }
 
@@ -994,15 +998,11 @@ private fun CenteredSpinner() {
 /**
  * 图文: the space's image dynamics.
  *
- * Thumbnails only — tapping one opens the dynamic's video when it has one, which
- * is the only target a preview can honour without a full dynamic reader.
+ * A tile opens the full reader, not just the picture: the preview is a way into
+ * the post, and the reader is where its text and the rest of the images live.
  */
 @Composable
-private fun IllustratedRow(entries: List<DynamicEntry>) {
-    // 图文 opens the same full-screen viewer the dynamic page uses, so a single
-    // preview image here is a way in rather than a dead end.
-    var viewer by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
-
+private fun IllustratedRow(entries: List<DynamicEntry>, onOpenDetail: (DynamicEntry) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         entries.chunked(2).forEach { rowItems ->
             Row(
@@ -1010,16 +1010,18 @@ private fun IllustratedRow(entries: List<DynamicEntry>) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 rowItems.forEach { entry ->
-                    Column(modifier = Modifier.weight(1f).padding(bottom = 12.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(bottom = 12.dp)
+                            .clickable { onOpenDetail(entry) },
+                    ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(16f / 9f)
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(AppTheme.colors.surfaceElevated)
-                                .clickable(enabled = entry.imageUrls.isNotEmpty()) {
-                                    viewer = entry.imageUrls to 0
-                                },
+                                .background(AppTheme.colors.surfaceElevated),
                         ) {
                             AsyncImage(
                                 model = entry.imageUrls.firstOrNull().orEmpty().toThumbUrl(),
@@ -1042,10 +1044,6 @@ private fun IllustratedRow(entries: List<DynamicEntry>) {
                 if (rowItems.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-    }
-
-    viewer?.let { (urls, at) ->
-        ImageViewer(urls = urls, startIndex = at, onDismiss = { viewer = null })
     }
 }
 
@@ -1131,17 +1129,25 @@ private fun BangumiGrid(items: List<SpaceBangumi>, onBangumiClick: (SpaceBangumi
 
 /** The 动态 tab: text, its first image, and a tap into a shared video. */
 @Composable
-private fun DynamicsList(entries: List<DynamicEntry>, onVideoClick: (String) -> Unit) {
+private fun DynamicsList(
+    entries: List<DynamicEntry>,
+    onVideoClick: (String) -> Unit,
+    onOpenDetail: (DynamicEntry) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         entries.forEach { entry ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .let { base ->
+                    // Video posts keep opening the player; everything else — a
+                    // pure 图文 post in particular — opens the reader. The old
+                    // version only made video posts clickable, which is why a
+                    // 图文 row in 个人主页 did nothing at all.
+                    .clickable {
                         if (entry.videoBvid.isNotEmpty()) {
-                            base.clickable { onVideoClick(entry.videoBvid) }
+                            onVideoClick(entry.videoBvid)
                         } else {
-                            base
+                            onOpenDetail(entry)
                         }
                     }
                     .padding(vertical = 10.dp),

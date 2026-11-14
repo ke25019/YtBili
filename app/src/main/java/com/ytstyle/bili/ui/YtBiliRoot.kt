@@ -266,6 +266,10 @@ fun YtBiliRoot(
                     },
                     // 番剧 plays through the same player, addressed as `ss<id>`.
                     onSeasonClick = { seasonId -> navController.navigate(Routes.player("ss$seasonId")) },
+                    onOpenDetail = { entry ->
+                        DynamicDetailSelection.entry = entry
+                        navController.navigate(Routes.dynamicDetail(entry.id))
+                    },
                 )
             }
 
