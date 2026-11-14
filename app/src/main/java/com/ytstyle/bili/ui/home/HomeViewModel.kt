@@ -363,7 +363,45 @@ class HomeViewModel @Inject constructor(
                 emptyFeedMessage = null,
             )
         }
-        load()
+        val rid = _state.value.selectedRid
+        if (rid == null) {
+            load()
+        } else {
+            viewModelScope.launch { refreshRegion(rid) }
+        }
+    }
+
+    /**
+     * Rebuilds a partition feed with its newest uploads in front of the ranking.
+     *
+     * The ranking endpoint is a snapshot: refreshing a partition replayed the
+     * same ninety videos forever, while 全部 kept producing new recommendations.
+     * `newlist` is the per-partition feed that actually moves; the ranking list
+     * is kept behind it so the partition still has something to scroll through.
+     */
+    private suspend fun refreshRegion(rid: Int) {
+        val newest = when (val result = regionApi.regionNewest(rid)) {
+            is Result.Ok -> result.value
+            is Result.Err -> emptyList()
+        }
+        val ranking = when (val result = regionApi.regionRanking(rid)) {
+            is Result.Ok -> result.value.list.filter { it.bvid.isNotEmpty() }
+            is Result.Err -> emptyList()
+        }
+        val merged = (newest + ranking).distinctBy { it.bvid }
+        if (merged.isEmpty()) {
+            fail("该分区暂时没有内容")
+            return
+        }
+        pool = merged
+        poolRid = rid
+        poolCursor = 0
+        val window = nextWindow()
+        if (window.isEmpty()) {
+            _state.update { it.copy(isRefreshing = false) }
+            return
+        }
+        appendPage(window)
     }
 
     /**

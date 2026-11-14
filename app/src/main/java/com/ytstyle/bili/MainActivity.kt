@@ -12,18 +12,24 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ytstyle.bili.ui.PipState
 import com.ytstyle.bili.ui.YtBiliRoot
-import com.ytstyle.bili.ui.components.LocalSystemBarIcons
 import com.ytstyle.bili.ui.components.SystemBarIcons
+import com.ytstyle.bili.ui.components.SystemBarsState
 import com.ytstyle.bili.ui.settings.SettingsViewModel
 import com.ytstyle.bili.ui.theme.AppTheme
 import com.ytstyle.bili.ui.theme.YtBiliTheme
@@ -40,8 +46,7 @@ class MainActivity : ComponentActivity() {
         // 3-button navigation bar (`isNavigationBarContrastEnforced`, on by
         // default since API 29). Between the two, the navigation strip came out as
         // an opaque grey band and the status bar as a light strip, instead of the
-        // page colour showing through. Both are disabled here and the icon tint is
-        // still driven by the app palette below.
+        // page colour showing through. Both are disabled here.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
@@ -60,32 +65,57 @@ class MainActivity : ComponentActivity() {
             YtBiliTheme(themeMode = themeMode) {
                 /**
                  * Status/navigation bar icons must follow the **app's** palette,
-                 * not the system's.
+                 * not the system's, unless the screen under the bar is not the
+                 * page background.
                  *
-                 * `enableEdgeToEdge()` picks the icon tint from the system dark
-                 * setting, but this app can be dark while the system is light (or
-                 * the reverse). The mismatch drew dark icons on a dark bar, which
-                 * reads as the clock and battery simply disappearing.
+                 * The whole window configuration is written in exactly one place —
+                 * here. Screens publish what they want through [SystemBarsState]
+                 * and never touch the insets controller themselves, which is what
+                 * stops a player's restore from leaving white icons on a white
+                 * page after it closes.
                  */
                 val dark = AppTheme.colors.background.luminance() < 0.5f
-                // A screen may override the tint when whatever sits behind the
-                // status bar is not the page background — the space page puts a
-                // banner there, and dark icons on artwork vanish.
-                val override = LocalSystemBarIcons.current
-                val lightIcons = when (override) {
+                val lightIcons = when (SystemBarsState.icons) {
                     SystemBarIcons.Light -> true
                     SystemBarIcons.Dark -> false
                     null -> dark
                 }
+                val barsHidden = SystemBarsState.hidden
+
                 val view = LocalView.current
-                SideEffect {
-                    val window = (view.context as? Activity)?.window ?: return@SideEffect
-                    WindowCompat.getInsetsController(window, view).apply {
+                val lifecycleOwner = LocalLifecycleOwner.current
+                val window = (view.context as? Activity)?.window
+
+                /** One definition of "correct", used by every trigger below. */
+                fun applyBars() {
+                    val target = window ?: return
+                    WindowCompat.getInsetsController(target, view).apply {
                         // `isAppearanceLight*` means *dark icons* on a light bar,
                         // so white icons need the flag off.
                         isAppearanceLightStatusBars = !lightIcons
                         isAppearanceLightNavigationBars = !lightIcons
+                        if (barsHidden) {
+                            systemBarsBehavior =
+                                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                            hide(WindowInsetsCompat.Type.systemBars())
+                        } else {
+                            show(WindowInsetsCompat.Type.systemBars())
+                        }
                     }
+                }
+
+                // Re-applied whenever the theme, an override or the visibility
+                // changes — including the moment the player leaves fullscreen.
+                SideEffect { applyBars() }
+
+                // Coming back from another activity or from the background can
+                // reset the window flags on some OEM builds; re-assert them.
+                DisposableEffect(lifecycleOwner, lightIcons, barsHidden) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) applyBars()
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
                 Surface(

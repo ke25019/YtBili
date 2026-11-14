@@ -58,12 +58,14 @@ import com.ytstyle.bili.data.net.SpaceVideo
 import com.ytstyle.bili.ui.relation.RelationTab
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.ytstyle.bili.ui.components.LocalSystemBarIcons
 import com.ytstyle.bili.ui.components.SystemBarIcons
+import com.ytstyle.bili.ui.components.SystemBarsState
 import com.ytstyle.bili.ui.components.ImageViewer
 import com.ytstyle.bili.ui.components.formatCount
 import com.ytstyle.bili.ui.components.formatDuration
@@ -123,7 +125,16 @@ fun SpaceScreen(
         // The banner is drawn under the status bar, so the icon tint has to
         // follow the picture rather than the app palette: dark artwork needs
         // white icons, a bright one keeps dark icons.
-        CompositionLocalProvider(LocalSystemBarIcons provides rememberBannerSystemBarIcons(state.banner)) {
+        //
+        // Published to the activity-wide holder. A CompositionLocal cannot do
+        // this job: the only consumer is the activity *above* this screen, and
+        // provided values travel downwards, so the override never arrived.
+        val bannerIcons = rememberBannerSystemBarIcons(state.banner)
+        DisposableEffect(bannerIcons) {
+            SystemBarsState.icons = bannerIcons
+            onDispose { SystemBarsState.icons = null }
+        }
+        CompositionLocalProvider(LocalSystemBarIcons provides bannerIcons) {
         when {
             profile != null -> SpaceBody(
                 state = state,

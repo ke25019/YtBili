@@ -84,6 +84,7 @@ private const val MAX_GRID_IMAGES = 9
 fun DynamicScreen(
     onVideoClick: (String) -> Unit,
     onLoginClick: () -> Unit,
+    onOpenDetail: (DynamicEntry) -> Unit,
     viewModel: DynamicViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -157,6 +158,7 @@ fun DynamicScreen(
                     onLike = viewModel::toggleLike,
                     onRepost = { entry -> composer = DynamicComposerTarget(entry, isRepost = true) },
                     onComment = { entry -> composer = DynamicComposerTarget(entry, isRepost = false) },
+                    onOpenDetail = onOpenDetail,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -406,6 +408,7 @@ private fun FeedColumn(
     onLike: (DynamicEntry) -> Unit,
     onRepost: (DynamicEntry) -> Unit,
     onComment: (DynamicEntry) -> Unit,
+    onOpenDetail: (DynamicEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -462,6 +465,7 @@ private fun FeedColumn(
                     onLike = { onLike(entry) },
                     onRepost = { onRepost(entry) },
                     onComment = { onComment(entry) },
+                    onOpenDetail = { onOpenDetail(entry) },
                 )
             }
             if (state.isLoadingMore) {
@@ -491,9 +495,18 @@ private fun DynamicCard(
     onLike: () -> Unit,
     onRepost: () -> Unit,
     onComment: () -> Unit,
+    onOpenDetail: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // Tapping the card's body opens the reading page. The image grid
+                // and the action row keep their own handlers, which win because
+                // they are children of this one.
+                .clickable(onClick = onOpenDetail)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val face = entry.authorFace.toSecureUrl()
                 Box(

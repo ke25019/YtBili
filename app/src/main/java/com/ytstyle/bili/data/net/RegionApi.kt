@@ -45,6 +45,26 @@ data class RegionRankingResponse(
     val data: RegionRanking? = null,
 )
 
+/**
+ * A partition's newest uploads (`x/web-interface/newlist`).
+ *
+ * This exists because the ranking list is a *snapshot*: pulling to refresh a
+ * partition returned the same 90 videos every time, while 全部 kept producing
+ * new recommendations. The newest list is the only per-partition feed that
+ * actually changes between refreshes.
+ */
+@Serializable
+data class RegionNewest(
+    val archives: List<RegionItem> = emptyList(),
+)
+
+@Serializable
+data class RegionNewestResponse(
+    val code: Int = -1,
+    val message: String = "",
+    val data: RegionNewest? = null,
+)
+
 interface RegionService {
     /** @param rid Bilibili's region id (1 = 动画, 4 = 游戏, …). */
     @GET("x/web-interface/ranking/v2")
@@ -52,6 +72,14 @@ interface RegionService {
         @Query("rid") rid: Int,
         @Query("type") type: String = "all",
     ): RegionRankingResponse
+
+    /** Newest uploads in a partition, newest first, paginated by [pn]. */
+    @GET("x/web-interface/newlist")
+    suspend fun regionNewest(
+        @Query("rid") rid: Int,
+        @Query("pn") pn: Int = 1,
+        @Query("ps") ps: Int = 20,
+    ): RegionNewestResponse
 }
 
 /**
@@ -86,6 +114,31 @@ class RegionApi @Inject constructor(
             Result.Err(e.message ?: "网络异常，请稍后重试")
         }
     }
+
+    /**
+     * The partition's newest uploads.
+     *
+     * Failure is not fatal at the call site: the home screen treats an empty
+     * result as "keep the ranking feed", so a broken endpoint cannot take the
+     * partition down with it.
+     */
+    suspend fun regionNewest(rid: Int, page: Int = 1): Result<List<RegionItem>> =
+        withContext(Dispatchers.IO) {
+            try {
+                val response = service.regionNewest(rid = rid, pn = page)
+                val payload = response.data
+                if (response.code == 0 && payload != null) {
+                    Result.Ok(payload.archives.filter { it.bvid.isNotEmpty() })
+                } else {
+                    Result.Err(
+                        response.message.ifBlank { "分区最新加载失败 (code=${response.code})" },
+                        response.code,
+                    )
+                }
+            } catch (e: Exception) {
+                Result.Err(e.message ?: "网络异常，请稍后重试")
+            }
+        }
 }
 
 @Module

@@ -96,6 +96,20 @@ fun parseDynamicPage(payload: JsonElement?): DynamicFeedPage {
 }
 
 /**
+ * One dynamic from `polymer/web-dynamic/v1/detail`.
+ *
+ * The body is `data.item`, the very object the feed uses for an entry, so the
+ * same walker is reused. Both the envelope and the bare `data` are accepted for
+ * the same reason as [parseDynamicPage].
+ */
+fun parseDynamicDetail(payload: JsonElement?): DynamicEntry? {
+    val root = payload as? JsonObject ?: return null
+    val data = root.obj("data") ?: root
+    val item = data.obj("item") ?: return null
+    return dynamicEntryOf(item)
+}
+
+/**
  * Walks `x/relation/followings`.
  *
  * The documented field is `uname`, but the payload has carried `name` in

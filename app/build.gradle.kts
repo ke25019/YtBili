@@ -104,8 +104,13 @@ android {
         // matched to the installed package and never substituted, and the
         // offline player's landscape chrome was tidied. Version chosen by the
         // user.
-        versionCode = 27
-        versionName = "1.13.4-beta"
+        //
+        // 1.13.5-beta: a play/pause control in 听视频 mode, one owner for the
+        // system bars (icon tint and visibility, re-applied on resume), partition
+        // refresh that actually brings new uploads, and the 图文动态 reading
+        // page. Version chosen by the user.
+        versionCode = 28
+        versionName = "1.13.5-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

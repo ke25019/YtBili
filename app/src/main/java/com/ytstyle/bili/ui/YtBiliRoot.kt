@@ -34,6 +34,8 @@ import com.ytstyle.bili.ui.components.YtTopBar
 import com.ytstyle.bili.ui.download.DownloadPickerScreen
 import com.ytstyle.bili.ui.download.DownloadScreen
 import com.ytstyle.bili.ui.download.OfflinePlayerScreen
+import com.ytstyle.bili.ui.dynamic.DynamicDetailScreen
+import com.ytstyle.bili.ui.dynamic.DynamicDetailSelection
 import com.ytstyle.bili.ui.dynamic.DynamicScreen
 import com.ytstyle.bili.ui.favorites.FavoritesScreen
 import com.ytstyle.bili.ui.follow.FollowScreen
@@ -154,6 +156,23 @@ fun YtBiliRoot(
                 DynamicScreen(
                     onVideoClick = { bvid -> navController.navigate(Routes.player(bvid)) },
                     onLoginClick = { navController.navigate(Routes.LOGIN) },
+                    onOpenDetail = { entry ->
+                        // Hand the parsed card over so the detail page paints
+                        // immediately; the id in the route is what the network
+                        // refinements and the comments use.
+                        DynamicDetailSelection.entry = entry
+                        navController.navigate(Routes.dynamicDetail(entry.id))
+                    },
+                )
+            }
+
+            composable(
+                route = Routes.DYNAMIC_DETAIL,
+                arguments = listOf(navArgument("dynId") { type = NavType.StringType }),
+            ) {
+                DynamicDetailScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenSpace = { mid -> navController.navigate(Routes.space(mid)) },
                 )
             }
 

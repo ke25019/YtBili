@@ -10,8 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -58,6 +56,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import com.ytstyle.bili.ui.components.SystemBarsState
 import com.ytstyle.bili.ui.player.OrientationUprightEffect
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
@@ -174,33 +173,30 @@ private fun OfflinePlayerContent(
         exitLandscapeRequested = false
     }
 
-    // Same rotation and system-bar handling as the streaming player: entering
-    // landscape means asking for the sensor orientation and hiding the bars,
-    // leaving it restores both.
+    // Rotation is this screen's business; the bars themselves belong to
+    // MainActivity. Publishing `hidden` there is what restores them on the way
+    // out — the previous version wrote the window directly and left the
+    // navigation bar hidden if a different path disposed it first.
     DisposableEffect(isFullscreen, exitLandscapeRequested) {
-        val controller = activity?.let {
-            WindowCompat.getInsetsController(it.window, it.window.decorView)
-        }
         when {
             isFullscreen -> {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                controller?.hide(WindowInsetsCompat.Type.systemBars())
             }
 
             exitLandscapeRequested -> {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                controller?.show(WindowInsetsCompat.Type.systemBars())
             }
 
             else -> {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                controller?.show(WindowInsetsCompat.Type.systemBars())
             }
         }
-        onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            controller?.show(WindowInsetsCompat.Type.systemBars())
-        }
+        onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+    }
+
+    DisposableEffect(landscape) {
+        SystemBarsState.hidden = landscape
+        onDispose { SystemBarsState.hidden = false }
     }
 
     DisposableEffect(Unit) {

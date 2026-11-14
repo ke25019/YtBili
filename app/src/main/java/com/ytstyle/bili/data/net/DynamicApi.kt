@@ -64,6 +64,20 @@ interface DynamicApi {
         @Query("pn") pn: Int = 1,
         @Query("order_type") orderType: String = "attention",
     ): BiliResponse<JsonElement>
+
+    /**
+     * One dynamic in full, by id.
+     *
+     * The same shape as an item inside `feed/all`, wrapped in `data.item`. It is
+     * the fallback for a list card that arrived truncated: the detail page opens
+     * from the card it already has and only calls this to fill in what the feed
+     * omitted (the full 展开 text, every image).
+     */
+    @GET("x/polymer/web-dynamic/v1/detail")
+    suspend fun detail(
+        @Query("id") id: String,
+        @Query("timezone_offset") timezoneOffset: Int = -480,
+    ): BiliResponse<JsonElement>
 }
 
 @Module

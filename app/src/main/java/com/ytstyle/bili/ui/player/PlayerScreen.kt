@@ -13,9 +13,6 @@ import android.util.Rational
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -37,6 +34,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.BoxScope
@@ -78,7 +76,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -108,6 +105,8 @@ import com.ytstyle.bili.data.net.Reply
 import com.ytstyle.bili.ui.PipState
 import com.ytstyle.bili.ui.cast.CastDialog
 import com.ytstyle.bili.ui.components.CompactSlider
+import com.ytstyle.bili.ui.components.SystemBarIcons
+import com.ytstyle.bili.ui.components.SystemBarsState
 import com.ytstyle.bili.ui.components.formatCount
 import com.ytstyle.bili.ui.theme.YtColors
 
@@ -266,20 +265,17 @@ fun PlayerScreen(
 
     /**
      * The player's status-bar strip is black in **both** themes, so its icons
-     * must be light regardless of the app palette. MainActivity's palette-derived
-     * value is restored on the way out.
+     * must be light regardless of the app palette.
+     *
+     * Only the *wish* is published here; MainActivity owns the window and
+     * re-derives the tint from the theme the moment this screen is gone. The
+     * previous version wrote the flag directly and restored it with an inverted
+     * value, which is exactly why light-theme users came back to white icons on
+     * a white page.
      */
-    val paletteWantsLightIcons = AppTheme.colors.background.luminance() < 0.5f
     DisposableEffect(Unit) {
-        val controller = activity?.let {
-            WindowCompat.getInsetsController(it.window, it.window.decorView)
-        }
-        controller?.isAppearanceLightStatusBars = false
-        controller?.isAppearanceLightNavigationBars = false
-        onDispose {
-            controller?.isAppearanceLightStatusBars = paletteWantsLightIcons
-            controller?.isAppearanceLightNavigationBars = paletteWantsLightIcons
-        }
+        SystemBarsState.icons = SystemBarIcons.Light
+        onDispose { SystemBarsState.icons = null }
     }
 
     /**
@@ -290,16 +286,11 @@ fun PlayerScreen(
      * two buttons disagreed about nothing but chrome.
      */
     DisposableEffect(isFullscreen, exitLandscapeRequested) {
-        val controller = activity?.let {
-            WindowCompat.getInsetsController(it.window, it.window.decorView)
-        }
         when {
             isFullscreen -> {
                 activity?.requestedOrientation =
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                controller?.hide(WindowInsetsCompat.Type.systemBars())
-                controller?.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                SystemBarsState.hidden = true
             }
 
             // The exit arrow was pressed while the phone itself was sideways:
@@ -307,17 +298,17 @@ fun PlayerScreen(
             // "exit" would look like it did nothing.
             exitLandscapeRequested -> {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                controller?.show(WindowInsetsCompat.Type.systemBars())
+                SystemBarsState.hidden = false
             }
 
             else -> {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                controller?.show(WindowInsetsCompat.Type.systemBars())
+                SystemBarsState.hidden = false
             }
         }
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            controller?.show(WindowInsetsCompat.Type.systemBars())
+            SystemBarsState.hidden = false
         }
     }
 
@@ -925,6 +916,16 @@ fun PlayerScreen(
                 }
 
                 if (state.audioOnly) {
+                    // The picture is collapsed to nothing in this mode, which left
+                    // a black strip with no controls at all. One obvious play /
+                    // pause target sits on it, with the way back at the top-left.
+                    AudioOnlyPlayerBar(
+                        isPlaying = isPlaying,
+                        onTogglePlay = {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        },
+                        onBack = onBack,
+                    )
                     AudioOnlyBanner(title = state.detail?.title.orEmpty())
                 }
 
@@ -2057,6 +2058,46 @@ private fun mediaHeaders(cookie: String): Map<String, String> = buildMap {
 internal const val MEDIA_USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
+@Composable
+private fun AudioOnlyPlayerBar(
+    isPlaying: Boolean,
+    onTogglePlay: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(132.dp)
+            .background(Color.Black),
+    ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                tint = Color.White,
+            )
+        }
+        IconButton(
+            onClick = onTogglePlay,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(Color(0x33FFFFFF)),
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlaying) "暂停" else "播放",
+                tint = Color.White,
+                modifier = Modifier.size(36.dp),
+            )
+        }
+    }
+}
 
 @Composable
 private fun AudioOnlyBanner(title: String) {

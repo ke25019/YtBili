@@ -76,6 +76,9 @@ object Routes {
     /** A user's space, keyed by mid. */
     const val SPACE = "space/{mid}"
 
+    /** One 图文动态's reading page, keyed by its `id_str`. */
+    const val DYNAMIC_DETAIL = "dynamic/{dynId}"
+
     /** A live room, keyed by room id. */
     const val LIVE_ROOM = "live/{roomId}"
 
@@ -114,6 +117,8 @@ object Routes {
     const val EMPTY_NAME_PLACEHOLDER = "-"
 
     fun space(mid: Long) = "space/$mid"
+
+    fun dynamicDetail(dynId: String) = "dynamic/$dynId"
 
     fun liveRoom(roomId: Long) = "live/$roomId"
 

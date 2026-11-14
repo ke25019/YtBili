@@ -215,12 +215,17 @@ class BiliRepository @Inject constructor(
      * comes back in `page.count`, so callers can tell whether more pages exist
      * instead of assuming one page is everything.
      */
-    suspend fun replies(oid: Long, page: Int = 1, mode: Int = 3): Result<ReplyListData> =
+    suspend fun replies(
+        oid: Long,
+        page: Int = 1,
+        mode: Int = 3,
+        type: Int = 1,
+    ): Result<ReplyListData> =
         safe {
             val params = signed(
                 mapOf(
                     "oid" to oid.toString(),
-                    "type" to "1",
+                    "type" to type.toString(),
                     // 3 = 最热, 2 = 最新.
                     "mode" to mode.toString(),
                     "ps" to REPLY_PAGE_SIZE.toString(),
@@ -229,6 +234,18 @@ class BiliRepository @Inject constructor(
             )
             api.replies(params).toResult()
         }
+
+    /**
+     * One page of comments under a 动态.
+     *
+     * Same endpoint as video comments, with `type = 17` (动态) and the dynamic id
+     * as the oid. The WBI signature is already applied inside [replies], which is
+     * required by `x/v2/reply/wbi/main` regardless of the object type.
+     */
+    suspend fun dynamicReplies(dynId: String, page: Int = 1): Result<ReplyListData> {
+        val oid = dynId.toLongOrNull() ?: return Result.Err("动态 id 无法解析")
+        return replies(oid = oid, page = page, mode = 3, type = 17)
+    }
 
     /**
      * Every reply inside one comment thread.
