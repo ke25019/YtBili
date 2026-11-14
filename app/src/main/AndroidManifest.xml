@@ -21,6 +21,15 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <!--
+        Experimental: read another Bilibili client's offline cache, which lives in
+        Android/data/<other package>/. On Android 11+ that needs "all files
+        access"; the switch in 设置 → 实验性功能 is off by default and the app only
+        reads local files.
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!--
         投屏: SSDP discovery needs a Wi-Fi multicast lock. Without it the Wi-Fi
         stack filters multicast replies and the search silently finds no
         devices, which looks exactly like "no TV on this network".

@@ -85,6 +85,14 @@ class SettingsViewModel @Inject constructor(
     val homeGrid: StateFlow<Boolean> = settings.homeGrid
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /** Experimental: read another client's offline cache. */
+    val externalCache: StateFlow<Boolean> = settings.externalCache
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setExternalCache(enabled: Boolean) {
+        viewModelScope.launch { settings.setExternalCache(enabled) }
+    }
+
     // ---- 音画设置 ----
 
     /** Default playback quality (`qn`), 1080P unless changed. */

@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import com.ytstyle.bili.ui.relation.RelationTab
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -79,6 +80,8 @@ fun AccountScreen(
     onDownloadsClick: () -> Unit = {},
     /** Opens one's own space; the avatar and the name both lead there. */
     onOpenSpace: (Long) -> Unit = {},
+    /** Opens the 粉丝 / 关注 second-level list for one's own mid. */
+    onOpenRelation: (Long, RelationTab) -> Unit = { _, _ -> },
 ) {
     LaunchedEffect(state.notice) {
         if (state.notice != null) {
@@ -101,7 +104,14 @@ fun AccountScreen(
 
         if (state.isLoggedIn) {
             Spacer(Modifier.height(8.dp))
-            StatsRow(following = state.following, followers = state.followers)
+            StatsRow(
+                following = state.following,
+                followers = state.followers,
+                // Both counts open the same list the space page shows; they used
+                // to be inert text.
+                onFollowingClick = { if (state.mid > 0) onOpenRelation(state.mid, RelationTab.Following) },
+                onFollowersClick = { if (state.mid > 0) onOpenRelation(state.mid, RelationTab.Fans) },
+            )
             Spacer(Modifier.height(8.dp))
             ExpBar(level = state.level, current = state.currentExp, next = state.nextExp)
         }
@@ -342,19 +352,30 @@ private fun ProfileHeader(
 }
 
 @Composable
-private fun StatsRow(following: Int, followers: Int) {
+private fun StatsRow(
+    following: Int,
+    followers: Int,
+    onFollowingClick: () -> Unit,
+    onFollowersClick: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        StatItem(following, "关注")
-        StatItem(followers, "粉丝")
+        StatItem(following, "关注", onFollowingClick)
+        StatItem(followers, "粉丝", onFollowersClick)
     }
 }
 
 @Composable
-private fun StatItem(value: Int, label: String) {
-    Row(verticalAlignment = Alignment.Bottom) {
+private fun StatItem(value: Int, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
         Text(
             text = value.toString(),
             color = AppTheme.colors.onBackground,

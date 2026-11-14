@@ -376,6 +376,28 @@ data class ReplyListData(
     val replies: List<Reply> = emptyList(),
     val page: ReplyPage? = null,
     @SerialName("top_replies") val topReplies: List<Reply>? = null,
+    /** Cursor for the next page; `x/v2/reply/wbi/main` pages this way, not by `pn`. */
+    val cursor: ReplyCursor? = null,
+)
+
+/**
+ * The paging cursor of `x/v2/reply/wbi/main`.
+ *
+ * This endpoint **ignores `pn`**: measured against a 1686-comment video, `pn=1`,
+ * `pn=2` and `pn=3` all returned the same first rpid. Only
+ * `pagination_str={"offset":"…"}` advances, which is why the reader stopped at
+ * one page with "没有更多评论了".
+ */
+@Serializable
+data class ReplyCursor(
+    @SerialName("is_end") val isEnd: Boolean = false,
+    @SerialName("all_count") val allCount: Int = 0,
+    @SerialName("pagination_reply") val paginationReply: ReplyPagination? = null,
+)
+
+@Serializable
+data class ReplyPagination(
+    @SerialName("next_offset") val nextOffset: String = "",
 )
 
 @Serializable

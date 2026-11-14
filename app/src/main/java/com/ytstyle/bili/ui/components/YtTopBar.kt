@@ -34,15 +34,17 @@ import coil.compose.AsyncImage
 import com.ytstyle.bili.ui.theme.YtColors
 
 /**
- * The YouTube wordmark: "You" in white, "Tube" in red, tight tracking.
- * Rendered as text rather than an asset so it scales with the theme and
- * carries no trademarked image into the build.
+ * The wordmark: "Yt" in the page colour, "Bili" in red, tight tracking.
+ *
+ * Rendered as text rather than an asset so it scales with the theme and carries
+ * no trademarked image into the build. It used to read "You" + "Bili", which
+ * rendered as "YouBili" — not the app's name.
  */
 @Composable
 fun YtWordmark(modifier: Modifier = Modifier) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
-            text = "You",
+            text = "Yt",
             color = AppTheme.colors.onBackground,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,

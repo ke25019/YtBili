@@ -168,6 +168,13 @@ data class PlayerUiState(
     val replyTargetRoot: Long = 0,
     /** Page of top-level comments already loaded; the server pages at 20. */
     val replyPage: Int = 1,
+    /**
+     * Cursor for the next page of comments.
+     *
+     * `x/v2/reply/wbi/main` ignores `pn` and advances only by this opaque
+     * `pagination_str` offset, so it is the real paging state.
+     */
+    val replyOffset: String = "",
     /** 最热 (default) or 最新. */
     val replySort: ReplySort = ReplySort.Hot,
     /** Preferred audio track, from 设置 → 播放 → 音画设置. */
@@ -799,6 +806,9 @@ class PlayerViewModel @Inject constructor(
                 isLoading = true,
                 danmaku = emptyList(),
                 replies = emptyList(),
+                replyPage = 1,
+                replyOffset = "",
+                hasMoreReplies = false,
                 error = null,
                 // Signed for the previous episode's cid; the new one needs its own.
                 castUrl = null,
@@ -928,6 +938,8 @@ class PlayerViewModel @Inject constructor(
             }
             val added = merged.size - current.replies.size
             val total = data.page?.count ?: merged.size
+            val cursor = data.cursor
+            val nextOffset = cursor?.paginationReply?.nextOffset.orEmpty()
             current.copy(
                 replies = merged,
                 replyTotalCount = total,
@@ -937,14 +949,20 @@ class PlayerViewModel @Inject constructor(
                 } else {
                     data.topReplies.orEmpty().mapTo(HashSet()) { it.rpid }
                 },
-                // "There is more" needs all three conditions:
-                //  * the page actually contributed something new — otherwise a
-                //    server that keeps returning the same page would offer a
-                //    button that never grows the list;
-                //  * either the page was full (so a further page may exist even
-                //    if `count` under-reports) or the total says so.
-                hasMoreReplies = added > 0 &&
-                    (data.replies.size >= REPLY_PAGE_SIZE || merged.size < total),
+                // The cursor is the only thing that advances this endpoint.
+                // Falling back to the old size heuristic keeps older responses
+                // (and the reply-thread endpoint, which still pages by `pn`)
+                // working.
+                replyOffset = nextOffset.ifBlank { current.replyOffset },
+                hasMoreReplies = if (cursor != null) {
+                    !cursor.isEnd && nextOffset.isNotBlank() && added > 0
+                } else {
+                    //  * the page actually contributed something new;
+                    //  * either the page was full (so a further page may exist
+                    //    even if `count` under-reports) or the total says so.
+                    added > 0 &&
+                        (data.replies.size >= REPLY_PAGE_SIZE || merged.size < total)
+                },
                 isLoadingMoreReplies = false,
             )
         }
@@ -965,6 +983,7 @@ class PlayerViewModel @Inject constructor(
                 replySort = sort,
                 replies = emptyList(),
                 replyPage = 1,
+                replyOffset = "",
                 hasMoreReplies = false,
                 isLoadingMoreReplies = false,
             )
@@ -986,7 +1005,15 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(isLoadingMoreReplies = true) }
         viewModelScope.launch {
             val next = current.replyPage + 1
-            when (val result = repository.replies(oid, next, mode = current.replySort.mode)) {
+            // The cursor is what actually moves the window; `pn` is sent for
+            // compatibility but the endpoint ignores it.
+            val result = repository.replies(
+                oid = oid,
+                page = next,
+                mode = current.replySort.mode,
+                offset = current.replyOffset,
+            )
+            when (result) {
                 is Result.Ok -> {
                     _state.update { it.copy(replyPage = next) }
                     applyReplies(result, append = true)

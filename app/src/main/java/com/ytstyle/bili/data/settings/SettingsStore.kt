@@ -110,6 +110,14 @@ class SettingsStore @Inject constructor(
         // Experimental.
         val HOME_GRID = booleanPreferencesKey("home_grid")
 
+        /**
+         * Read media cached by another Bilibili client.
+         *
+         * Off by default: on Android 11+ it needs the "all files access" special
+         * permission, and it writes entries into this app's own download index.
+         */
+        val EXTERNAL_CACHE = booleanPreferencesKey("external_cache")
+
         // 音画设置: the quality the player asks for when it opens a video, and
         // the audio track it prefers. Stored as strings so a future tier can be
         // added without a migration.
@@ -177,6 +185,14 @@ class SettingsStore @Inject constructor(
     /** Experimental: two-column home feed. */
     val homeGrid: Flow<Boolean> =
         context.settingsDataStore.data.map { it[Keys.HOME_GRID] ?: false }
+
+    /** Experimental: list media cached by another Bilibili client. */
+    val externalCache: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[Keys.EXTERNAL_CACHE] ?: false }
+
+    suspend fun setExternalCache(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.EXTERNAL_CACHE] = enabled }
+    }
 
     /** Default `qn` for playback; 80 is Bilibili's 1080P. */
     val defaultQuality: Flow<Int> =

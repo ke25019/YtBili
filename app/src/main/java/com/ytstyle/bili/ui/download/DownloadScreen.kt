@@ -133,9 +133,12 @@ private fun DownloadRow(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = listOf(item.videoLabel, item.audioLabel)
-                        .filter { it.isNotEmpty() }
-                        .joinToString(" · "),
+                    // Imported rows say where they came from: they cannot be
+                    // resumed or deleted here, the other client owns the files.
+                    text = (
+                        listOf(item.videoLabel, item.audioLabel).filter { it.isNotEmpty() } +
+                            listOfNotNull("其他客户端".takeIf { item.external })
+                        ).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,
                     color = AppTheme.colors.onBackgroundSecondary,
                 )

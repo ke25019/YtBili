@@ -19,7 +19,14 @@ import com.ytstyle.bili.data.log.AppLog
 /**
  * Renders Bilibili's Geetest challenge.
  *
- * Geetest's own `gt4.js` is loaded and driven the way Bilibili's web client
+ * **Version 3, not 4.** Bilibili's `/x/passport-login/captcha` hands out a
+ * `gt`/`challenge` pair that is registered on the v3 service: `gettype.php?gt=…`
+ * answers `success` with `type: "fullpage"`, while the v4 `load?captcha_id=…`
+ * endpoint answers `-50103 not captcha` for the same id. Driving v4's `gt4.js`
+ * with it produced a blank frame and a cross-origin `Script error.`, which is
+ * what the login page had been showing.
+ *
+ * Geetest's own `gt.js` is loaded and driven the way Bilibili's web client
  * drives it, so whatever challenge Bilibili currently demands is handled by the
  * vendor's code rather than guessed at here. The resulting `validate`/`seccode`
  * pair is what the login POST expects.
@@ -27,8 +34,7 @@ import com.ytstyle.bili.data.log.AppLog
  * ## Why a load failure is no longer fatal
  *
  * The captcha page pulls resources from several hosts, and Geetest itself
- * **tries more than one domain** (`gcaptcha4.geevisit.com`, then
- * `gcaptcha4.gsensebot.com`). Chromium blocks some of those probes with
+ * **tries more than one domain**. Chromium blocks some of those probes with
  * `ERR_BLOCKED_BY_ORB` — opaque-response blocking, which fires on a cross-origin
  * response that does not look like the script it was requested as.
  *
@@ -36,9 +42,6 @@ import com.ytstyle.bili.data.log.AppLog
  * the login, before Geetest's own failover had a chance to reach a domain that
  * answers properly. Only a **main-frame** failure is fatal now; sub-resource
  * failures are logged and otherwise ignored.
- *
- * The vendor's `bind` product also opens sub-frames and, on some devices, a
- * window, so those are enabled explicitly.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -174,7 +177,7 @@ private fun buildCaptchaHtml(gt: String, challenge: String): String = """
     html, body { margin: 0; padding: 0; background: #FFFFFF; }
     #captcha { padding: 8px; }
   </style>
-  <script src="https://static.geetest.com/v4/gt4.js"></script>
+  <script src="https://static.geetest.com/static/js/gt.0.4.9.js"></script>
 </head>
 <body>
   <div id="captcha"></div>
@@ -196,21 +199,21 @@ private fun buildCaptchaHtml(gt: String, challenge: String): String = """
       }
     }, 6000);
 
-    if (typeof initGeetest4 !== 'function') {
-      reportError('gt4.js 未能加载');
+    if (typeof initGeetest !== 'function') {
+      reportError('gt.js 未能加载');
     } else {
-      initGeetest4({
-        // v4's parameter is `captchaId`; passing v3's `gt` made the SDK request
-        // /load without a captcha_id, which the service answers with HTTP 403 —
-        // the blank challenge in the logs.
-        captchaId: '$gt',
+      initGeetest({
+        gt: '$gt',
         challenge: '$challenge',
-        // `float` renders the challenge inline. `bind` waits for a separate
-        // trigger element that this page never provides, so it reported "ready"
-        // while drawing nothing.
+        offline: false,
+        new_captcha: true,
+        // Inline slide bar: no separate trigger element to click, which the
+        // `bind` product would have required.
         product: 'float',
-        lang: 'zh-cn'
+        lang: 'zh-cn',
+        width: '100%'
       }, function (captcha) {
+        captcha.appendTo('#captcha');
         // onReady fires once the challenge is actually on screen, which is what
         // tells the app the wait is over.
         if (captcha.onReady) {
@@ -219,12 +222,14 @@ private fun buildCaptchaHtml(gt: String, challenge: String): String = """
             try { window.DroidBridge.onReady(); } catch (e) {}
           });
         }
-        captcha.appendTo('#captcha');
         captcha.onSuccess(function () {
           captchaReady = true;
-          var result = captcha.getValidate() || {};
-          var validate = JSON.stringify(result);
-          window.DroidBridge.onSuccess(validate, validate + '|jordan');
+          var v = captcha.getValidate() || {};
+          // v3 hands back geetest_challenge / geetest_validate / geetest_seccode.
+          // The login POST wants the whole object as `validate` and
+          // `geetest_seccode` as `seccode`; appending "|jordan" was the v4 rule
+          // and v3 rejects it.
+          window.DroidBridge.onSuccess(JSON.stringify(v), v.geetest_seccode || '');
         });
         captcha.onError(function (err) {
           reportError((err && err.message) ? err.message : 'captcha error');

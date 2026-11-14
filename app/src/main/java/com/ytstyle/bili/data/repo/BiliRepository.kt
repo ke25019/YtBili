@@ -211,15 +211,18 @@ class BiliRepository @Inject constructor(
     /**
      * One page of top-level comments.
      *
-     * `mode=3` is heat order and `ps=20` is the server's own ceiling; the total
-     * comes back in `page.count`, so callers can tell whether more pages exist
-     * instead of assuming one page is everything.
+     * Paged by **cursor**, not by `pn`: `x/v2/reply/wbi/main` accepts `pn` but
+     * ignores it — measured on a 1686-comment video, `pn=1/2/3` all returned the
+     * same first rpid. [offset] is the `cursor.pagination_reply.next_offset` of
+     * the previous page, empty for the first. `mode=3` is heat order and `ps=20`
+     * is the server's own ceiling.
      */
     suspend fun replies(
         oid: Long,
         page: Int = 1,
         mode: Int = 3,
         type: Int = 1,
+        offset: String = "",
     ): Result<ReplyListData> =
         safe {
             val params = signed(
@@ -230,6 +233,9 @@ class BiliRepository @Inject constructor(
                     "mode" to mode.toString(),
                     "ps" to REPLY_PAGE_SIZE.toString(),
                     "pn" to page.toString(),
+                    "plat" to "1",
+                    "web_location" to "1315871",
+                    "pagination_str" to """{"offset":"$offset"}""",
                 ),
             )
             api.replies(params).toResult()

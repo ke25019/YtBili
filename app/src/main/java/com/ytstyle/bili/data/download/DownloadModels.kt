@@ -62,6 +62,13 @@ data class DownloadItem(
     /** Signed source URLs, kept so 继续 can restart without re-resolving. */
     val videoUrl: String = "",
     val audioUrl: String = "",
+    /**
+     * True when the files were found in another client's cache rather than
+     * downloaded here. Such an entry has no source URLs and cannot be resumed;
+     * it exists to be listed and played, and it is removed again when the
+     * experimental toggle is turned off.
+     */
+    val external: Boolean = false,
 ) {
     /** Combined on-disk size, used by the manager screen. */
     val totalBytes: Long get() = videoBytes + audioBytes

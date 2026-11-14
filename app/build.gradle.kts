@@ -113,8 +113,14 @@ android {
         // 1.13.6-beta: a partition's feed now starts from its newest uploads
         // (paginated) instead of the ranking snapshot, and 个人主页's 图文 and
         // dynamic rows open the reader. Version chosen by the user.
-        versionCode = 29
-        versionName = "1.13.6-beta"
+        //
+        // 1.13.7-beta: partitions are back on 热度排行榜, the login captcha
+        // moved to Geetest v3 (v4 never recognised Bilibili's gt), comments page
+        // by cursor because `pn` is ignored, the reader clears the navigation
+        // bar, 关注/粉丝 open their lists, and an experimental switch reads
+        // another client's offline cache. Version chosen by the user.
+        versionCode = 30
+        versionName = "1.13.7-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

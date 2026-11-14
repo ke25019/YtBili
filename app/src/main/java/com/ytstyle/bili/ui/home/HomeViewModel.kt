@@ -120,14 +120,6 @@ class HomeViewModel @Inject constructor(
     private var poolCursor = 0
 
     /**
-     * Which page of the partition's newest list [pool] currently holds.
-     *
-     * `0` means the pool came from the ranking fallback (or there is no pool),
-     * which is not paginated.
-     */
-    private var regionPage = 0
-
-    /**
      * Feeds already fetched, keyed by rid (`null` = 全部).
      *
      * Switching chips used to wipe the list and re-request, so 动画 → 游戏 → 动画
@@ -161,8 +153,6 @@ class HomeViewModel @Inject constructor(
         val poolCursor: Int,
         val freshIdx: Int,
         val reachedEnd: Boolean,
-        /** Which page of the newest list the pool holds; `0` for ranking pools. */
-        val regionPage: Int,
     )
 
     /**
@@ -251,7 +241,12 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * A partition chip: read the region pool once, then serve windows of it.
+     * A partition chip: read the region's **ranking** once, then serve windows
+     * of it.
+     *
+     * Ranking, not newest uploads: the ordering the user expects from a
+     * partition is 热度, and a newest-first feed put unvetted uploads on top.
+     * The ranking is a snapshot, so refresh re-reads the same list by design.
      *
      * The cursor is advanced in [nextWindow] even when the fetched items are
      * already on screen. That matters for the auto-feed: a minute may pass
@@ -261,52 +256,22 @@ class HomeViewModel @Inject constructor(
      */
     private suspend fun loadRegion(rid: Int) {
         if (pool == null || poolRid != rid) {
-            val first = newestPage(rid, 1)
-            if (first.isNotEmpty()) {
-                // Newest uploads are the feed now. The ranking list was the old
-                // source, and it is a *snapshot*: its first entry was 592 days
-                // old when checked, so every visit to a partition showed the same
-                // frozen set. `newlist` also paginates, which ranking cannot.
-                pool = first
-                poolRid = rid
-                poolCursor = 0
-                regionPage = 1
-            } else {
-                // Keep one fallback so a broken newest endpoint still leaves the
-                // partition with something rather than an empty screen.
-                when (val result = regionApi.regionRanking(rid)) {
-                    is Result.Ok -> {
-                        pool = result.value.list.filter { it.bvid.isNotEmpty() }
-                        poolRid = rid
-                        poolCursor = 0
-                        regionPage = 0
-                    }
-                    is Result.Err -> {
-                        fail(result.message)
-                        return
-                    }
+            when (val result = regionApi.regionRanking(rid)) {
+                is Result.Ok -> {
+                    pool = result.value.list.filter { it.bvid.isNotEmpty() }
+                    poolRid = rid
+                    poolCursor = 0
+                }
+                is Result.Err -> {
+                    fail(result.message)
+                    return
                 }
             }
         }
 
-        var window = nextWindow()
-        // The pool was one page of newest uploads; when it runs out, ask for the
-        // next page before declaring the partition finished. Capped per call so a
-        // page full of already-seen videos cannot turn into an unbounded loop.
-        var pagesTried = 0
-        while (window.isEmpty() && regionPage > 0 && pagesTried < MAX_REGION_PAGES_PER_LOAD) {
-            pagesTried++
-            val next = newestPage(rid, regionPage + 1)
-            if (next.isEmpty()) {
-                regionPage = 0
-                break
-            }
-            regionPage++
-            pool = (pool ?: emptyList()) + next
-            window = nextWindow()
-        }
+        val window = nextWindow()
 
-        AppLog.d("home", "region rid=$rid page=$regionPage got=${window.size}")
+        AppLog.d("home", "region rid=$rid got=${window.size}")
 
         if (window.isEmpty()) {
             _state.update {
@@ -402,39 +367,9 @@ class HomeViewModel @Inject constructor(
                 emptyFeedMessage = null,
             )
         }
-        // Both feeds now restart the same way: 全部 asks for a fresh
-        // recommendation page, a partition for its newest uploads.
+        // Both feeds restart the same way: 全部 asks for a fresh
+        // recommendation page, a partition refetches its ranking.
         load()
-    }
-
-    /**
-     * The newest uploads of a partition, one page at a time.
-     *
-     * Empty on failure rather than throwing: the caller decides whether that
-     * means "fall back to ranking" (first page) or "stop paging" (later pages).
-     */
-    private suspend fun newestPage(rid: Int, page: Int): List<RegionItem> =
-        when (val result = regionApi.regionNewest(rid, page)) {
-            is Result.Ok -> result.value
-            is Result.Err -> emptyList()
-        }
-
-    /**
-     * Prepends uploads published since a partition's feed was cached.
-     *
-     * Additive and silent on purpose: the cached list stays on screen while this
-     * runs, and only genuinely new bvids are inserted. The pool cursor is left
-     * untouched because [nextWindow] already skips anything already on screen.
-     */
-    private suspend fun mergeNewest(rid: Int) {
-        if (_state.value.selectedRid != rid) return
-        val newest = newestPage(rid, 1)
-        // The user may have switched away while the request was in flight.
-        if (_state.value.selectedRid != rid) return
-        val known = _state.value.items.mapTo(HashSet()) { it.bvid }
-        val fresh = newest.filter { it.bvid.isNotEmpty() && known.add(it.bvid) }
-        if (fresh.isEmpty()) return
-        _state.update { it.copy(items = fresh + it.items) }
     }
 
     /**
@@ -448,7 +383,6 @@ class HomeViewModel @Inject constructor(
         pool = null
         poolRid = null
         poolCursor = 0
-        regionPage = 0
     }
 
     /**
@@ -500,7 +434,6 @@ class HomeViewModel @Inject constructor(
             poolCursor = poolCursor,
             freshIdx = freshIdx,
             reachedEnd = _state.value.reachedEnd,
-            regionPage = regionPage,
         )
 
         val cached = feedCache[rid]
@@ -512,7 +445,6 @@ class HomeViewModel @Inject constructor(
             poolRid = if (cached.pool != null) rid else null
             poolCursor = cached.poolCursor
             freshIdx = cached.freshIdx
-            regionPage = cached.regionPage
             _state.update {
                 it.copy(
                     selectedRid = rid,
@@ -524,7 +456,6 @@ class HomeViewModel @Inject constructor(
                     isRefreshing = false,
                 )
             }
-            if (rid != null) viewModelScope.launch { mergeNewest(rid) }
             return
         }
 
@@ -599,12 +530,5 @@ class HomeViewModel @Inject constructor(
          * per minute, not a loop.
          */
         const val AUTO_FEED_INTERVAL_MS = 60_000L
-
-        /**
-         * How many extra pages of a partition's newest list one [loadRegion]
-         * call may fetch. A page whose videos are all already on screen would
-         * otherwise keep the loop asking for the next one indefinitely.
-         */
-        private const val MAX_REGION_PAGES_PER_LOAD = 3
     }
 }

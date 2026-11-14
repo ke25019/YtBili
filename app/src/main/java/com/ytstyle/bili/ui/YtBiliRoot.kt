@@ -189,6 +189,9 @@ fun YtBiliRoot(
                     onWatchLaterClick = { navController.navigate(Routes.WATCH_LATER) },
                     onDownloadsClick = { navController.navigate(Routes.DOWNLOADS) },
                     onOpenSpace = { mid -> navController.navigate(Routes.space(mid)) },
+                    onOpenRelation = { mid, tab ->
+                        navController.navigate(Routes.relationList(mid, tab))
+                    },
                 )
             }
 

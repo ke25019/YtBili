@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -164,7 +165,10 @@ fun DynamicDetailScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    // The action bar floats over the end of the list, and it now
+                    // includes the navigation-bar inset, so the padding has to
+                    // cover both.
+                    contentPadding = PaddingValues(bottom = 104.dp),
                 ) {
                     item(key = "author") {
                         AuthorRow(entry = entry, onOpenSpace = onOpenSpace)
@@ -261,6 +265,11 @@ fun DynamicDetailScreen(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .background(AppTheme.colors.surfaceElevated)
+                    // The gesture bar and the three-button navigation bar draw
+                    // over this row otherwise, so the bottom tap targets sat
+                    // underneath the system's own buttons — the "图文 page fights
+                    // the navigation bar" report.
+                    .navigationBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

@@ -51,6 +51,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.ytstyle.bili.ui.components.toSecureUrl
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.compose.ui.platform.LocalContext
 import com.ytstyle.bili.BuildConfig
 import com.ytstyle.bili.data.log.AppLog
@@ -92,6 +96,7 @@ private enum class SettingsPage(val title: String, val parent: SettingsPage?) {
     AudioVideo("音画设置", Playback),
     Danmaku("弹幕设置", Root),
     Account("账户", Root),
+    Experiments("实验性功能", Root),
     About("关于", Root),
 }
 
@@ -142,10 +147,18 @@ fun SettingsScreen(
     val activeMid by viewModel.activeMid.collectAsStateWithLifecycle()
     val autoUpdate by viewModel.autoUpdate.collectAsStateWithLifecycle()
     val updateChannel by viewModel.updateChannel.collectAsStateWithLifecycle()
+    val externalCache by viewModel.externalCache.collectAsStateWithLifecycle()
 
     // Sampled when the page opens: the user is here to change a preference, and
     // a live subscription would only add a moving label to a settings screen.
     val context = LocalContext.current
+    /** Recomputed per composition so returning from the system switch updates it. */
+    val hasAllFilesAccess =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
     val networkLabel = remember(context) { NetworkStatus.current(context).label }
 
     var showSwitchDialog by remember { mutableStateOf(false) }
@@ -203,7 +216,39 @@ fun SettingsScreen(
                     NavRow("播放", "弹幕、自动播放、流量") { page = SettingsPage.Playback }
                     NavRow("弹幕设置", "字号、透明度、显示区域、速度") { page = SettingsPage.Danmaku }
                     NavRow("账户", "切换账户、退出登录与本地数据") { page = SettingsPage.Account }
+                    NavRow("实验性功能", "尚未稳定、默认关闭的选项") { page = SettingsPage.Experiments }
                     NavRow("关于", "版本与说明") { page = SettingsPage.About }
+                }
+
+                SettingsPage.Experiments -> {
+                    SectionTitle("离线缓存")
+                    SwitchRow(
+                        "读取其他客户端的缓存",
+                        "把官方客户端已缓存的视频列进「我的缓存」，可直接播放",
+                        externalCache,
+                        viewModel::setExternalCache,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "只读取本机已有的缓存文件，不会下载或上传任何内容；" +
+                            "关闭后这些条目会从「我的缓存」移除。" +
+                            "Android 11 及以上需要「所有文件访问权限」。",
+                        color = AppTheme.colors.onBackgroundSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                    if (externalCache && !hasAllFilesAccess) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "去授予「所有文件访问权限」",
+                            color = YtColors.Red,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { openAllFilesAccessSettings(context) }
+                                .padding(vertical = 6.dp),
+                        )
+                    }
                 }
 
                 SettingsPage.HomeFeed -> {
@@ -935,4 +980,18 @@ private fun InfoRow(label: String, value: String) {
         Spacer(Modifier.width(16.dp))
         Text(text = value, color = AppTheme.colors.onBackground, fontSize = 13.sp)
     }
+}
+
+/** Opens the system screen where "all files access" is granted per app. */
+private fun openAllFilesAccessSettings(context: android.content.Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:${context.packageName}"),
+        )
+    } else {
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.parse("package:${context.packageName}"))
+    }
+    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
