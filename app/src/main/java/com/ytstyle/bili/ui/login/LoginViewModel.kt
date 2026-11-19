@@ -320,7 +320,7 @@ class LoginViewModel @Inject constructor(
             when (
                 val result = repository.smsLogin(
                     tel = current.tel,
-                    cid = current.countryCode,
+                    cid = biliCountryId(current.countryCode),
                     code = current.smsCode,
                     captchaKey = smsCaptchaKey,
                     token = current.captchaToken,
@@ -456,7 +456,7 @@ class LoginViewModel @Inject constructor(
             when (
                 val result = repository.smsSend(
                     tel = current.tel,
-                    cid = current.countryCode,
+                    cid = biliCountryId(current.countryCode),
                     token = token,
                     challenge = current.geetest?.challenge.orEmpty(),
                     validate = captchaValidate,
@@ -626,3 +626,12 @@ class LoginViewModel @Inject constructor(
         const val CAPTCHA_TIMEOUT_MS = 20_000L
     }
 }
+
+/**
+ * Bilibili's cid is the **country-list id**, not the dialling prefix.
+ *
+ * 中国大陆 is id = 1 whose country_id is "86"; the form shows "+86" because
+ * that is what users recognise. The login endpoints want the list id, so the
+ * prefix is translated here instead of being sent raw.
+ */
+private fun biliCountryId(dialCode: Int): Int = if (dialCode == 86) 1 else dialCode

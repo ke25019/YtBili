@@ -225,11 +225,12 @@ private fun buildCaptchaHtml(gt: String, challenge: String): String = """
         captcha.onSuccess(function () {
           captchaReady = true;
           var v = captcha.getValidate() || {};
-          // v3 hands back geetest_challenge / geetest_validate / geetest_seccode.
-          // The login POST wants the whole object as `validate` and
-          // `geetest_seccode` as `seccode`; appending "|jordan" was the v4 rule
-          // and v3 rejects it.
-          window.DroidBridge.onSuccess(JSON.stringify(v), v.geetest_seccode || '');
+          // `validate` is the raw geetest_validate string and `seccode` is
+          // geetest_seccode. Sending the whole object as JSON — which this page
+          // used to do — makes Bilibili answer "验证码错误" (-105) even though the
+          // challenge was solved, because the login POST expects the two fields
+          // verbatim.
+          window.DroidBridge.onSuccess(v.geetest_validate || '', v.geetest_seccode || '');
         });
         captcha.onError(function (err) {
           reportError((err && err.message) ? err.message : 'captcha error');

@@ -111,6 +111,12 @@ class SettingsStore @Inject constructor(
         val HOME_GRID = booleanPreferencesKey("home_grid")
 
         /**
+         * Whether the home recommendation feed refreshes itself when the app is
+         * opened. Off means "show the last snapshot until I pull to refresh".
+         */
+        val HOME_AUTO_REFRESH = booleanPreferencesKey("home_auto_refresh")
+
+        /**
          * Read media cached by another Bilibili client.
          *
          * Off by default: on Android 11+ it needs the "all files access" special
@@ -192,6 +198,14 @@ class SettingsStore @Inject constructor(
 
     suspend fun setExternalCache(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.EXTERNAL_CACHE] = enabled }
+    }
+
+    /** Experimental: refresh the home feed when the app opens (default on). */
+    val homeAutoRefresh: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[Keys.HOME_AUTO_REFRESH] ?: true }
+
+    suspend fun setHomeAutoRefresh(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.HOME_AUTO_REFRESH] = enabled }
     }
 
     /** Default `qn` for playback; 80 is Bilibili's 1080P. */

@@ -148,6 +148,7 @@ fun SettingsScreen(
     val autoUpdate by viewModel.autoUpdate.collectAsStateWithLifecycle()
     val updateChannel by viewModel.updateChannel.collectAsStateWithLifecycle()
     val externalCache by viewModel.externalCache.collectAsStateWithLifecycle()
+    val homeAutoRefresh by viewModel.homeAutoRefresh.collectAsStateWithLifecycle()
 
     // Sampled when the page opens: the user is here to change a preference, and
     // a live subscription would only add a moving label to a settings screen.
@@ -249,6 +250,19 @@ fun SettingsScreen(
                                 .padding(vertical = 6.dp),
                         )
                     }
+
+                    Spacer(Modifier.height(18.dp))
+                    SectionTitle("首页")
+                    SwitchRow(
+                        "打开应用时自动刷新推荐流",
+                        if (homeAutoRefresh) {
+                            "每次打开应用都会重新拉取推荐"
+                        } else {
+                            "打开应用时先显示上次的内容，下拉才刷新"
+                        },
+                        homeAutoRefresh,
+                        viewModel::setHomeAutoRefresh,
+                    )
                 }
 
                 SettingsPage.HomeFeed -> {

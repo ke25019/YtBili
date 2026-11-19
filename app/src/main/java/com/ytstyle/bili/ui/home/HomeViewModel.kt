@@ -2,6 +2,7 @@ package com.ytstyle.bili.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ytstyle.bili.data.home.HomeFeedCache
 import com.ytstyle.bili.data.net.RegionApi
 import com.ytstyle.bili.data.net.RegionItem
 import com.ytstyle.bili.data.net.RecommendItem
@@ -19,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -99,6 +101,7 @@ class HomeViewModel @Inject constructor(
     private val repository: BiliRepository,
     private val regionApi: RegionApi,
     private val partitionStore: HomePartitionStore,
+    private val feedSnapshot: HomeFeedCache,
     settings: SettingsStore,
 ) : ViewModel() {
 
@@ -166,7 +169,26 @@ class HomeViewModel @Inject constructor(
     private var partitionsLoaded = false
 
     init {
-        load()
+        // "打开应用时自动刷新推荐流" decides the first paint: on keeps the old
+        // behaviour (fetch immediately), off replays the last snapshot so the
+        // list does not move under the user until they pull to refresh.
+        viewModelScope.launch {
+            val autoRefresh = runCatching { settings.homeAutoRefresh.first() }.getOrDefault(true)
+            if (autoRefresh) {
+                load()
+            } else {
+                val cached = feedSnapshot.load()
+                if (cached.isNotEmpty()) {
+                    _state.update {
+                        it.copy(items = cached, isLoading = false, isRefreshing = false)
+                    }
+                } else {
+                    // Nothing cached yet (first launch, or the file is gone):
+                    // fetching once beats showing an empty page.
+                    load()
+                }
+            }
+        }
         // The grid toggle lives in settings; react to it without recreating
         // the screen.
         viewModelScope.launch {
@@ -344,6 +366,8 @@ class HomeViewModel @Inject constructor(
                 reachedEnd = fresh.isEmpty() && it.items.isNotEmpty(),
             )
         }
+        // Keep a small snapshot on disk for the launches that must not refresh.
+        viewModelScope.launch { feedSnapshot.save(_state.value.items) }
     }
 
     private fun fail(message: String) {

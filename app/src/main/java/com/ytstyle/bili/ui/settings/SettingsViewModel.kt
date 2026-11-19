@@ -93,6 +93,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settings.setExternalCache(enabled) }
     }
 
+    /** Experimental: refresh the home feed when the app opens. */
+    val homeAutoRefresh: StateFlow<Boolean> = settings.homeAutoRefresh
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setHomeAutoRefresh(enabled: Boolean) {
+        viewModelScope.launch { settings.setHomeAutoRefresh(enabled) }
+    }
+
     // ---- 音画设置 ----
 
     /** Default playback quality (`qn`), 1080P unless changed. */
