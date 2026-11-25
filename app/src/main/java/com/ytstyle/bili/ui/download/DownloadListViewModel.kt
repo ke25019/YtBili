@@ -6,12 +6,12 @@ import com.ytstyle.bili.data.download.DownloadItem
 import com.ytstyle.bili.data.download.DownloadManager
 import com.ytstyle.bili.data.download.DownloadStore
 import com.ytstyle.bili.data.download.ExternalCache
+import com.ytstyle.bili.data.download.ExternalCacheSync
 import com.ytstyle.bili.data.settings.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -43,6 +43,7 @@ class DownloadListViewModel @Inject constructor(
     private val store: DownloadStore,
     private val manager: DownloadManager,
     private val externalCache: ExternalCache,
+    private val externalSync: ExternalCacheSync,
     private val settings: SettingsStore,
 ) : ViewModel() {
 
@@ -67,28 +68,9 @@ class DownloadListViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             settings.externalCache.collect { enabled ->
-                if (enabled) importExternal() else dropExternal()
+                if (enabled) externalSync.sync() else externalSync.drop()
             }
         }
-    }
-
-    /**
-     * Scans the other clients' caches and indexes what it found.
-     *
-     * Stale entries are dropped first: the source files can be deleted by the
-     * other app at any time, and a row that points at a missing file is worse
-     * than no row.
-     */
-    private suspend fun importExternal() {
-        val found = externalCache.scan()
-        val existing = store.items.first()
-        val foundIds = found.mapTo(HashSet()) { it.id }
-        existing.filter { it.external && it.id !in foundIds }.forEach { store.remove(it.id) }
-        found.forEach { store.upsert(it) }
-    }
-
-    private suspend fun dropExternal() {
-        store.items.first().filter { it.external }.forEach { store.remove(it.id) }
     }
 
     /** Called by the settings row to ask for the special permission. */

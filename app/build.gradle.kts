@@ -119,8 +119,15 @@ android {
         // by cursor because `pn` is ignored, the reader clears the navigation
         // bar, 关注/粉丝 open their lists, and an experimental switch reads
         // another client's offline cache. Version chosen by the user.
-        versionCode = 30
-        versionName = "1.13.7-beta"
+        //
+        // 1.13.8-beta: both avatars in a 私信 conversation, the external-cache
+        // feature actually parses the official layout (and explains the
+        // Android 11 storage rule instead of silently finding nothing), and the
+        // 资源库 covers refresh on every visit to 我的. The SMS captcha payload
+        // fix and the feed auto-refresh switch from the previous local-only
+        // build are included. Version chosen by the user.
+        versionCode = 31
+        versionName = "1.13.8-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

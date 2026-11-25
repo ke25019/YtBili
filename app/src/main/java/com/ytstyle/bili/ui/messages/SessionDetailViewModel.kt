@@ -6,10 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.ytstyle.bili.data.log.AppLog
 import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.repo.Result
+import com.ytstyle.bili.data.session.SessionStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -18,6 +20,9 @@ data class SessionDetailUiState(
     val peerName: String = "",
     /** The peer's avatar, shown beside incoming bubbles. */
     val peerFace: String = "",
+    /** The signed-in user's own name and avatar, shown beside outgoing bubbles. */
+    val selfName: String = "",
+    val selfFace: String = "",
     /** Oldest first, so the list reads top-to-bottom. */
     val messages: List<SessionMessage> = emptyList(),
     val emotes: Map<String, String> = emptyMap(),
@@ -51,6 +56,12 @@ class SessionDetailViewModel @Inject constructor(
      * belong to this one, the same way every other write in the app uses it.
      */
     private val bili: BiliRepository,
+    /**
+     * The signed-in profile, for the avatar beside outgoing bubbles. Reading it
+     * from the persisted session keeps this page independent of the shell's
+     * account view model (the message centre is pushed over the tab bar).
+     */
+    private val session: SessionStore,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -80,6 +91,22 @@ class SessionDetailViewModel @Inject constructor(
     init {
         load(endSeqno = null)
         loadPeerCard()
+        loadSelfProfile()
+    }
+
+    /**
+     * Seeds the signed-in user's name and avatar for outgoing bubbles.
+     *
+     * The profile is written to the session store whenever the account page
+     * refreshes, so reading it once is enough for this screen; there is no
+     * second request to make.
+     */
+    private fun loadSelfProfile() {
+        viewModelScope.launch {
+            val name = session.unameFlow.first()
+            val face = session.faceFlow.first()
+            _state.update { it.copy(selfName = name, selfFace = face) }
+        }
     }
 
     /**

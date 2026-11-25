@@ -10,47 +10,72 @@ import com.ytstyle.bili.data.log.AppLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.longOrNull
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * One directory that was searched for another client's cache.
+ *
+ * Reported to the settings page so "打开开关后什么都没发生" has an explanation:
+ * the two reasons that matter are the wrong path and the Android 11 storage
+ * rule, and both are invisible without this.
+ */
+data class ExternalRootReport(
+    /** Path as shown in the UI, with the storage root shortened to `/sdcard`. */
+    val path: String,
+    val exists: Boolean,
+    val readable: Boolean,
+    /** `entry.json` files seen below this root. */
+    val entries: Int,
+    /** Entries that became a playable [DownloadItem]. */
+    val parsed: Int,
+    val note: String = "",
+)
+
+/** Result of one scan; carries the items *and* why the other roots were empty. */
+data class ExternalScan(
+    val hasAccess: Boolean = true,
+    val items: List<DownloadItem> = emptyList(),
+    val roots: List<ExternalRootReport> = emptyList(),
+) {
+    val entries: Int get() = roots.sumOf { it.entries }
+
+    /** Paths that were readable but contained nothing we could use. */
+    val complete: Boolean get() = items.isNotEmpty()
+}
+
+/**
  * Finds media cached by **another** Bilibili client and turns it into
  * [DownloadItem]s this app can list and play.
  *
- * Layout of the official client's cache (one directory per downloaded video):
+ * ## Where it looks
  *
- * ```
- * Android/data/tv.danmaku.bili/download/<…>/entry.json
- * Android/data/tv.danmaku.bili/download/<…>/<quality>/video.m4s
- * Android/data/tv.danmaku.bili/download/<…>/<quality>/audio.m4s
- * ```
+ * 1. The official clients' own directories, `Android/data/tv.danmaku.bili/download`
+ *    and `Android/data/com.bilibili.app.in/download`.
+ * 2. A copy the user made in public storage: `Download/BiliCache` or
+ *    `/sdcard/BiliCache`.
  *
- * `entry.json` carries the metadata; the quality directory (`64`, `80`, …) is
- * read from its `type_tag`, but the files are also searched for when the tag
- * does not match, because the official client moves them around between
- * versions.
+ * ## Why a copy exists at all
  *
- * ## Why this is behind a switch
+ * From Android 11, an app *cannot* read another app's `Android/data` directory,
+ * even with the "all files access" special permission:
  *
- * `Android/data/<other package>` is readable on Android 10 and below. From
- * Android 11, filesystem access to another app's external directory requires the
- * "all files access" special permission ([Environment.isExternalStorageManager]);
- * without it the directory simply lists as empty. So the feature is opt-in, the
- * settings row explains what it needs, and a failed scan is a no-result rather
- * than an error.
+ * > Apps that are granted this permission still can't access the app-specific
+ * > directories that belong to other apps.
+ * > — developer.android.com/training/data-storage/manage-all-files
+ *
+ * That is a system rule, not a missing permission, and it is why the first
+ * release of this feature (which only scanned `Android/data`) found nothing on
+ * a modern phone. The public copy is the only route that works without root or
+ * Shizuku; `tools/import-phone-cache.ps1` makes the copy with adb in one step.
+ * The scan still *tries* the direct path first, because it works on Android 10
+ * and below (and on a rooted device).
  */
 @Singleton
 class ExternalCache @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** Packages whose cache we know how to read, most likely first. */
     private val packages = listOf(
@@ -59,10 +84,11 @@ class ExternalCache @Inject constructor(
     )
 
     /**
-     * Whether the filesystem will actually show another app's directory.
+     * Whether the filesystem will show public storage at all.
      *
      * Below API 30 this is always true; from 30 it needs the special permission,
-     * which only the user can grant in system settings.
+     * which only the user can grant in system settings. It does **not** unlock
+     * other apps' `Android/data` — see the class comment.
      */
     fun hasAccess(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -87,84 +113,140 @@ class ExternalCache @Inject constructor(
     }
 
     /**
-     * Scans every known package and returns what it could parse.
-     *
-     * Entries whose media files are missing are skipped: an `entry.json` on its
-     * own is a half-finished download, and listing it would produce a row that
-     * cannot play.
+     * Scans every known location and returns what it could parse, plus a report
+     * per location. Entries whose media files are missing are skipped: an
+     * `entry.json` on its own is a half-finished download, and listing it would
+     * produce a row that cannot play.
      */
-    suspend fun scan(): List<DownloadItem> = withContext(Dispatchers.IO) {
+    suspend fun scan(): ExternalScan = withContext(Dispatchers.IO) {
         if (!hasAccess()) {
             AppLog.i("download", "external cache skipped: no all-files access")
-            return@withContext emptyList()
+            return@withContext ExternalScan(hasAccess = false)
         }
-        val storage = Environment.getExternalStorageDirectory()
-        val found = buildList {
-            packages.forEach { pkg ->
-                val root = File(storage, "Android/data/$pkg/download")
-                if (!root.isDirectory) return@forEach
-                root.walkTopDown()
-                    .maxDepth(MAX_SEARCH_DEPTH)
-                    .filter { it.isFile && it.name == ENTRY_NAME }
-                    .forEach { entry -> itemOf(entry)?.let(::add) }
+
+        val reports = mutableListOf<ExternalRootReport>()
+        val found = mutableListOf<DownloadItem>()
+
+        roots().forEach { root ->
+            val (report, items) = scanRoot(root)
+            reports += report
+            found += items
+            if (report.entries > report.parsed) {
+                AppLog.w(
+                    "download",
+                    "external cache: ${report.entries - report.parsed} entr(ies) unreadable in ${report.path}",
+                )
             }
         }
-        AppLog.i("download", "external cache scan: ${found.size} item(s)")
-        found
-    }
 
-    private fun itemOf(entryFile: File): DownloadItem? = runCatching {
-        val root = json.parseToJsonElement(entryFile.readText()) as? JsonObject ?: return null
-        val dir = entryFile.parentFile ?: return null
+        // The same video may sit in both the direct path and the public copy,
+        // and the same episode may exist in two qualities. Keep the largest
+        // video track, which is the quality the user chose to download.
+        val unique = LinkedHashMap<String, DownloadItem>()
+        found.forEach { item ->
+            val previous = unique[item.id]
+            if (previous == null || item.videoBytes > previous.videoBytes) unique[item.id] = item
+        }
 
-        val video = findFile(dir, VIDEO_NAME) ?: return null
-        val audio = findFile(dir, AUDIO_NAME)
-
-        val pageData = root["page_data"] as? JsonObject
-        val title = root.text("title")
-            .ifBlank { pageData?.text("part").orEmpty() }
-            .ifBlank { root.text("bvid") }
-
-        DownloadItem(
-            id = "external-" + dir.absolutePath.hashCode().toUInt().toString(16),
-            title = title.ifBlank { "未命名缓存" },
-            cover = root.text("cover"),
-            bvid = root.text("bvid"),
-            cid = root.number("cid") ?: pageData?.number("cid") ?: 0L,
-            videoPath = video.absolutePath,
-            audioPath = audio?.absolutePath.orEmpty(),
-            videoBytes = video.length(),
-            audioBytes = audio?.length() ?: 0L,
-            state = DownloadState.DONE,
-            createdAt = root.number("create_time") ?: dir.lastModified(),
-            external = true,
+        AppLog.i(
+            "download",
+            "external cache scan: entries=${reports.sumOf { it.entries }}, " +
+                "items=${unique.size}, roots=${reports.size}",
         )
-    }.onFailure {
-        AppLog.w("download", "cannot read ${entryFile.absolutePath}: ${it.javaClass.simpleName}")
-    }.getOrNull()
-
-    /** Depth-limited search: the files sit a couple of levels below `entry.json`. */
-    private fun findFile(dir: File, name: String): File? =
-        dir.walkTopDown().maxDepth(MAX_FILE_DEPTH).firstOrNull { it.isFile && it.name == name }
-
-    private fun JsonObject.text(key: String): String {
-        val primitive = this[key] as? JsonPrimitive ?: return ""
-        return primitive.contentOrNull?.trim().orEmpty()
+        ExternalScan(hasAccess = true, items = unique.values.toList(), roots = reports)
     }
 
-    private fun JsonObject.number(key: String): Long? {
-        val primitive = this[key] as? JsonPrimitive ?: return null
-        primitive.longOrNull?.let { return it }
-        return primitive.contentOrNull?.trim()?.toLongOrNull()
+    /** Direct paths first (Android ≤10 or root), then the public copies. */
+    private fun roots(): List<File> {
+        val storage = Environment.getExternalStorageDirectory()
+        return buildList {
+            packages.forEach { pkg -> add(File(storage, "Android/data/$pkg/download")) }
+            add(File(storage, "Download/BiliCache"))
+            add(File(storage, "BiliCache"))
+        }.distinctBy { it.absolutePath }
+    }
+
+    private fun scanRoot(root: File): Pair<ExternalRootReport, List<DownloadItem>> {
+        val path = displayPath(root)
+        // On Android 11+ this directory is hidden from us entirely, so `exists()`
+        // can be false for a place that really is there. Say why, not "missing".
+        val hiddenBySystem = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            root.absolutePath.contains("/Android/data/")
+        if (!root.exists()) {
+            return ExternalRootReport(
+                path = path,
+                exists = false,
+                readable = false,
+                entries = 0,
+                parsed = 0,
+                note = if (hiddenBySystem) {
+                    "不可见（Android 11 起禁止第三方应用访问其他应用的目录）"
+                } else {
+                    "不存在"
+                },
+            ) to emptyList()
+        }
+
+        // A directory another app owns shows up as existing but refuses to list;
+        // that is the Android 11 rule, and it must be reported as such rather
+        // than as "empty".
+        val children = runCatching { root.listFiles() }.getOrNull()
+        if (children == null) {
+            return ExternalRootReport(
+                path = path,
+                exists = true,
+                readable = false,
+                entries = 0,
+                parsed = 0,
+                note = "无法读取（Android 11 起禁止第三方应用读取其他应用的目录）",
+            ) to emptyList()
+        }
+
+        val entryFiles = runCatching {
+            root.walkTopDown()
+                .maxDepth(MAX_SEARCH_DEPTH)
+                .filter { it.isFile && it.name == ENTRY_NAME }
+                .toList()
+        }.getOrElse {
+            AppLog.w("download", "external cache: cannot walk $path (${it.javaClass.simpleName})")
+            emptyList()
+        }
+
+        var parsed = 0
+        val items = entryFiles.mapNotNull { entry ->
+            ExternalCacheParser.parse(entry)?.also { parsed++ }
+        }
+
+        val note = when {
+            entryFiles.isEmpty() -> "没有找到 entry.json"
+            parsed < entryFiles.size -> "${entryFiles.size - parsed} 个缓存不完整或无法解析"
+            else -> ""
+        }
+        return ExternalRootReport(
+            path = path,
+            exists = true,
+            readable = true,
+            entries = entryFiles.size,
+            parsed = parsed,
+            note = note,
+        ) to items
+    }
+
+    /** `/storage/emulated/0/Download/BiliCache` reads better as `/sdcard/…`. */
+    private fun displayPath(file: File): String {
+        val root = Environment.getExternalStorageDirectory().absolutePath
+        return file.absolutePath.removePrefix(root).let {
+            if (it.startsWith("/")) "/sdcard$it" else file.absolutePath
+        }
     }
 
     private companion object {
         const val ENTRY_NAME = "entry.json"
-        const val VIDEO_NAME = "video.m4s"
-        const val AUDIO_NAME = "audio.m4s"
 
-        /** `download/<season>/<episode>/entry.json` is the usual nesting. */
-        const val MAX_SEARCH_DEPTH = 4
-        const val MAX_FILE_DEPTH = 3
+        /**
+         * `download/<avid>/c_<cid>/entry.json` is the current nesting; a copied
+         * folder may add one more level (`…/download/<avid>/…`), hence 5.
+         */
+        const val MAX_SEARCH_DEPTH = 5
     }
 }

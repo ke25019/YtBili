@@ -192,6 +192,7 @@ fun YtBiliRoot(
                     onOpenRelation = { mid, tab ->
                         navController.navigate(Routes.relationList(mid, tab))
                     },
+                    onRefreshCovers = accountViewModel::refreshLibraryCovers,
                 )
             }
 

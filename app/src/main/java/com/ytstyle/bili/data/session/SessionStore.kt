@@ -41,6 +41,15 @@ class SessionStore @Inject constructor(
     val midFlow: Flow<Long> = context.sessionDataStore.data.map { it[Keys.MID]?.toLongOrNull() ?: 0L }
     val unameFlow: Flow<String> = context.sessionDataStore.data.map { it[Keys.UNAME] ?: "" }
 
+    /**
+     * The signed-in user's own avatar.
+     *
+     * Screens that show both sides of a conversation need it without reaching
+     * for the shell's account state: the private-message detail page is pushed
+     * over the tab bar, so it has no access to the shell's view model.
+     */
+    val faceFlow: Flow<String> = context.sessionDataStore.data.map { it[Keys.FACE] ?: "" }
+
     /** Synchronous read for the OkHttp interceptor, which runs off the main flow. */
     @Volatile
     var cachedCookie: String = ""

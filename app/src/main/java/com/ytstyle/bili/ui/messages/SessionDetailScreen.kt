@@ -141,6 +141,8 @@ fun SessionDetailScreen(
                         emotes = state.emotes,
                         peerName = state.peerName,
                         peerFace = state.peerFace,
+                        selfName = state.selfName,
+                        selfFace = state.selfFace,
                         onOpenVideo = onOpenVideo,
                     )
                 }
@@ -291,6 +293,8 @@ private fun MessageBubble(
     emotes: Map<String, String>,
     peerName: String,
     peerFace: String,
+    selfName: String,
+    selfFace: String,
     onOpenVideo: (String) -> Unit,
 ) {
     if (message.kind == SessionMessageKind.SYSTEM || message.kind == SessionMessageKind.RECALLED) {
@@ -314,9 +318,10 @@ private fun MessageBubble(
     ) {
         val contentColor = if (message.outgoing) Color.White else AppTheme.colors.onBackground
 
-        // The peer's avatar beside incoming bubbles. A 1:1 conversation has one
-        // other participant, so this comes from the session card rather than
-        // from each message — the message payload carries no face.
+        // Both participants get a face beside their own bubbles: the peer on
+        // the left, the signed-in user on the right. A 1:1 conversation has one
+        // other participant, so the peer's comes from the session card rather
+        // than from each message — the message payload carries no face.
         if (!message.outgoing) {
             MessageAvatar(
                 name = peerName,
@@ -399,6 +404,16 @@ private fun MessageBubble(
                     fontSize = 10.sp,
                 )
             }
+        }
+
+        if (message.outgoing) {
+            Spacer(Modifier.width(8.dp))
+            MessageAvatar(
+                name = selfName,
+                url = selfFace,
+                size = 34.dp,
+                fallback = "我",
+            )
         }
     }
 }

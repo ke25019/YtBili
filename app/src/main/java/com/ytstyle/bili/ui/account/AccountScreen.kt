@@ -82,6 +82,12 @@ fun AccountScreen(
     onOpenSpace: (Long) -> Unit = {},
     /** Opens the 粉丝 / 关注 second-level list for one's own mid. */
     onOpenRelation: (Long, RelationTab) -> Unit = { _, _ -> },
+    /**
+     * Re-reads the 资源库 covers. Fired on every entry to this tab, because the
+     * four pictures are "most recent item" snapshots that go stale as soon as
+     * the user watches, collects or downloads something.
+     */
+    onRefreshCovers: () -> Unit = {},
 ) {
     LaunchedEffect(state.notice) {
         if (state.notice != null) {
@@ -89,6 +95,11 @@ fun AccountScreen(
             onDismissNotice()
         }
     }
+
+    // This destination is recreated each time the tab is selected (the bottom
+    // bar pops it with state saving), so a Unit-keyed effect is exactly "every
+    // visit". The previous covers stay visible while the refresh runs.
+    LaunchedEffect(Unit) { onRefreshCovers() }
 
     Column(
         modifier = Modifier

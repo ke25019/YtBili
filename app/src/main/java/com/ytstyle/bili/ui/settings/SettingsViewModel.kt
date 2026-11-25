@@ -2,6 +2,9 @@ package com.ytstyle.bili.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ytstyle.bili.data.download.ExternalCache
+import com.ytstyle.bili.data.download.ExternalCacheSync
+import com.ytstyle.bili.data.download.ExternalScan
 import com.ytstyle.bili.data.session.AccountStore
 import com.ytstyle.bili.data.session.SavedAccount
 import com.ytstyle.bili.data.session.SessionStore
@@ -12,18 +15,36 @@ import com.ytstyle.bili.data.settings.ThemeMode
 import com.ytstyle.bili.data.update.UpdateChannel
 import com.ytstyle.bili.ui.player.DanmakuMode
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/**
+ * Outcome of the experimental "read another client's cache" scan.
+ *
+ * Shown in 实验性功能 rather than kept silent: when nothing is imported, the
+ * report says which directory was blank or blocked, which is the difference
+ * between "the feature is broken" and "the system will not show that folder".
+ */
+data class ExternalCacheUiState(
+    val scanning: Boolean = false,
+    val scan: ExternalScan? = null,
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsStore,
     private val session: SessionStore,
     private val accountStore: AccountStore,
+    /** Named for the scanner, not the switch: `externalCache` below is the toggle. */
+    private val externalCacheAccess: ExternalCache,
+    private val externalSync: ExternalCacheSync,
 ) : ViewModel() {
 
     /**
@@ -89,9 +110,40 @@ class SettingsViewModel @Inject constructor(
     val externalCache: StateFlow<Boolean> = settings.externalCache
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    private val _externalScan = MutableStateFlow(ExternalCacheUiState())
+    val externalScan: StateFlow<ExternalCacheUiState> = _externalScan.asStateFlow()
+
     fun setExternalCache(enabled: Boolean) {
-        viewModelScope.launch { settings.setExternalCache(enabled) }
+        viewModelScope.launch {
+            settings.setExternalCache(enabled)
+            if (enabled) {
+                scanExternalCache()
+            } else {
+                externalSync.drop()
+                _externalScan.value = ExternalCacheUiState()
+            }
+        }
     }
+
+    /**
+     * Runs one import now.
+     *
+     * Called when the switch is turned on and by the 重新检测 action, so the
+     * result is visible on this page without having to open 离线缓存 first.
+     */
+    fun scanExternalCache() {
+        if (_externalScan.value.scanning) return
+        viewModelScope.launch {
+            _externalScan.update { it.copy(scanning = true) }
+            val scan = runCatching { externalSync.sync() }.getOrNull()
+            _externalScan.value = ExternalCacheUiState(scanning = false, scan = scan)
+        }
+    }
+
+    /** Whether "all files access" is actually granted right now. */
+    fun hasExternalAccess(): Boolean = externalCacheAccess.hasAccess()
+
+    fun openExternalAccessSettings() = externalCacheAccess.openAccessSettings()
 
     /** Experimental: refresh the home feed when the app opens. */
     val homeAutoRefresh: StateFlow<Boolean> = settings.homeAutoRefresh

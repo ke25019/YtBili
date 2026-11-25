@@ -179,8 +179,13 @@ private fun DownloadRow(
                     enabled = item.videoUrl.isNotBlank() && item.audioUrl.isNotBlank(),
                 ) { Text("继续") }
             }
-            TextButton(onClick = { onDelete(item.id) }) {
-                Text(text = "删除", color = YtColors.Red)
+            // Imported rows get no 删除: the files belong to the other client,
+            // and a deleted row would simply be re-imported by the next scan.
+            // Turning the experimental switch off removes all of them.
+            if (!item.external) {
+                TextButton(onClick = { onDelete(item.id) }) {
+                    Text(text = "删除", color = YtColors.Red)
+                }
             }
         }
     }

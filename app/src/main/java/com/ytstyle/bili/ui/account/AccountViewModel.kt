@@ -8,6 +8,7 @@ import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.repo.Result
 import com.ytstyle.bili.data.session.SessionStore
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,6 +96,9 @@ class AccountViewModel @Inject constructor(
     private val _state = MutableStateFlow(AccountUiState())
     val state: StateFlow<AccountUiState> = _state.asStateFlow()
 
+    /** The in-flight cover lookup, so a re-entry replaces it instead of racing it. */
+    private var coversJob: Job? = null
+
     init {
         viewModelScope.launch {
             // collectLatest: a rapid login→logout pair cancels the in-flight
@@ -126,6 +130,25 @@ class AccountViewModel @Inject constructor(
 
     fun refresh() {
         viewModelScope.launch { refreshNow() }
+    }
+
+    /**
+     * Re-reads the four 资源库 covers.
+     *
+     * Called every time the tab is shown. The covers are snapshots of "the most
+     * recent item" (newest watch-history entry, newest favourite, newest
+     * download), so they go stale as soon as the user watches or collects
+     * anything — refreshing only at launch, as this used to, left a card
+     * showing a video from days ago.
+     *
+     * The previous pictures stay on screen while the new ones load: this only
+     * replaces the map once the lookups settle, so the section never flashes
+     * back to the icon panels.
+     */
+    fun refreshLibraryCovers() {
+        val current = _state.value
+        if (!current.isLoggedIn || current.mid <= 0) return
+        loadLibraryCovers(current.mid)
     }
 
     private suspend fun refreshNow() {
@@ -165,7 +188,8 @@ class AccountViewModel @Inject constructor(
      * panel rather than a wrong picture.
      */
     private fun loadLibraryCovers(mid: Long) {
-        viewModelScope.launch {
+        coversJob?.cancel()
+        coversJob = viewModelScope.launch {
             val covers = mutableMapOf<LibraryEntry, String>()
 
             val history = repository.history()

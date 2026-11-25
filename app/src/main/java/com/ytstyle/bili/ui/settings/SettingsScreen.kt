@@ -148,6 +148,7 @@ fun SettingsScreen(
     val autoUpdate by viewModel.autoUpdate.collectAsStateWithLifecycle()
     val updateChannel by viewModel.updateChannel.collectAsStateWithLifecycle()
     val externalCache by viewModel.externalCache.collectAsStateWithLifecycle()
+    val externalScan by viewModel.externalScan.collectAsStateWithLifecycle()
     val homeAutoRefresh by viewModel.homeAutoRefresh.collectAsStateWithLifecycle()
 
     // Sampled when the page opens: the user is here to change a preference, and
@@ -232,8 +233,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(10.dp))
                     Text(
                         text = "只读取本机已有的缓存文件，不会下载或上传任何内容；" +
-                            "关闭后这些条目会从「我的缓存」移除。" +
-                            "Android 11 及以上需要「所有文件访问权限」。",
+                            "关闭后这些条目会从「我的缓存」移除。",
                         color = AppTheme.colors.onBackgroundSecondary,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
@@ -248,6 +248,12 @@ fun SettingsScreen(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { openAllFilesAccessSettings(context) }
                                 .padding(vertical = 6.dp),
+                        )
+                    }
+                    if (externalCache) {
+                        ExternalScanReport(
+                            state = externalScan,
+                            onRescan = viewModel::scanExternalCache,
                         )
                     }
 
@@ -993,6 +999,101 @@ private fun InfoRow(label: String, value: String) {
         Text(text = label, color = AppTheme.colors.onBackgroundSecondary, fontSize = 13.sp)
         Spacer(Modifier.width(16.dp))
         Text(text = value, color = AppTheme.colors.onBackground, fontSize = 13.sp)
+    }
+}
+
+/**
+ * What the last external-cache scan found, and why it found nothing.
+ *
+ * The switch used to import silently, so "开了没用" had no visible cause. This
+ * panel names the directories that were searched, marks the one the system
+ * hides, and says how to make the files reachable without root.
+ */
+@Composable
+private fun ExternalScanReport(
+    state: ExternalCacheUiState,
+    onRescan: () -> Unit,
+) {
+    val scan = state.scan
+    Spacer(Modifier.height(10.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppTheme.colors.surfaceElevated)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = when {
+                state.scanning -> "正在检测…"
+                scan == null -> "检测结果：尚未检测"
+                !scan.hasAccess -> "检测结果：未授予「所有文件访问权限」"
+                scan.items.isNotEmpty() -> "检测结果：找到 ${scan.items.size} 个可播放缓存"
+                scan.entries > 0 -> "检测结果：找到 ${scan.entries} 个 entry.json，但没有完整的缓存"
+                else -> "检测结果：没有找到缓存"
+            },
+            color = AppTheme.colors.onBackground,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+        )
+
+        scan?.let { report ->
+            // "不存在" roots are noise; a hidden-by-the-system root is the
+            // single most important line here, so it stays.
+            report.roots
+                .filter { it.exists || (it.note.isNotBlank() && it.note != "不存在") }
+                .forEach { root ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "· ${root.path}：" + when {
+                            !root.readable -> root.note.ifBlank { "无法读取" }
+                            root.entries == 0 -> "没有缓存"
+                            else -> "${root.parsed}/${root.entries} 个可播放"
+                        },
+                        color = if (root.readable) {
+                            AppTheme.colors.onBackgroundSecondary
+                        } else {
+                            YtColors.Red
+                        },
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+
+            if (!report.hasAccess) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "「所有文件访问权限」只决定能否看到公共存储；" +
+                        "其他应用的 Android/data 目录从 Android 11 起对第三方应用完全隐藏。",
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+            } else if (report.items.isEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "官方客户端的缓存放在 Android/data 里，Android 11 起系统不允许" +
+                        "第三方应用读取（即使授予所有文件权限）。请把 tv.danmaku.bili 的 " +
+                        "download 文件夹复制到 /sdcard/Download/BiliCache：部分机型的系统" +
+                        "「文件管理」可以直接进入 Android/data；也可以用电脑运行 " +
+                        "tools/import-phone-cache.ps1。复制后点「重新检测」。",
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (state.scanning) "检测中…" else "重新检测",
+            color = if (state.scanning) AppTheme.colors.onBackgroundSecondary else YtColors.Red,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = !state.scanning, onClick = onRescan)
+                .padding(vertical = 4.dp, horizontal = 2.dp),
+        )
     }
 }
 
