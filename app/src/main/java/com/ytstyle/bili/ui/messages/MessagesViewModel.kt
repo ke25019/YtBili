@@ -73,6 +73,9 @@ class MessagesViewModel @Inject constructor(
 
     private var loadedOnce = false
 
+    /** Last time [onScreenShown] refreshed; see the debounce there. */
+    private var lastAutoRefreshMs = 0L
+
     init {
         viewModelScope.launch {
             var wasLoggedOut = true
@@ -138,18 +141,28 @@ class MessagesViewModel @Inject constructor(
     }
 
     /**
-     * Refreshes when the message centre is shown again.
+     * Refreshes the counters and the session list when the page is shown again.
      *
-     * Reading a conversation marks it read through `update_ack`, but the badges
-     * on this screen are server state — they were only fetched once, so the red
-     * dot survived returning from a chat. Re-entering the destination recreates
-     * its composition, which is exactly one call per visit; the first visit is
-     * skipped because [init] is already loading.
+     * Deliberately **not** a full [refresh]: re-entering after reading a chat
+     * only needs the unread counters and the session rows, and pulling the three
+     * notification feeds again on every visit is what raced into `-509` (rate
+     * limited) — which then wiped the session list and replaced it with the
+     * notification feed. A failed refresh now keeps the old list.
      */
     fun onScreenShown() {
         val current = _state.value
         if (!loadedOnce || current.isRefreshing || current.loggedOut) return
-        refresh()
+        // The first composition happens right after `init`'s refresh; without
+        // this window the page would fire a second round of requests within a
+        // few hundred milliseconds and invite the very `-509` this method is
+        // meant to avoid.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastAutoRefreshMs < 3_000L) return
+        lastAutoRefreshMs = now
+        viewModelScope.launch {
+            loadUnread()
+            loadSessions()
+        }
     }
 
     /** Appends the next page of one category. */
@@ -231,7 +244,11 @@ class MessagesViewModel @Inject constructor(
             }
             is MsgResult.Err -> _state.update {
                 it.copy(
-                    sessions = emptyList(),
+                    // Keep whatever was already on screen: a rate-limited
+                    // refresh must not erase a list the user is looking at (and
+                    // must not swap it for the notification feed, whose rows
+                    // open videos). Only the error line changes.
+                    sessions = it.sessions,
                     sessionsError = result.message,
                     sessionsLoaded = true,
                 )

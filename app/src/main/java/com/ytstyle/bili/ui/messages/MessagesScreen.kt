@@ -150,23 +150,54 @@ private fun MessagesContent(
     onOpenVideo: (String) -> Unit,
     onOpenSession: (Long, Int, String) -> Unit,
 ) {
-    if (state.selected == null && state.sessions.isNotEmpty()) {
-        SessionList(
-            sessions = state.sessions,
-            onOpenVideo = onOpenVideo,
-            onOpenSession = onOpenSession,
-        )
-    } else {
-        NotificationFeed(
+    when {
+        // A selected category is a notification page, never the session list.
+        state.selected != null -> NotificationFeed(
             state = state,
             onLoadMore = onLoadMore,
             onLoadMoreAll = onLoadMoreAll,
             onRetry = onRetry,
             onOpenVideo = onOpenVideo,
-            // Only the default view can fall back here *because* sessions
-            // failed; a selected category never explains itself with a session
-            // error.
-            sessionsError = if (state.selected == null) state.sessionsError else null,
+            sessionsError = null,
+        )
+
+        state.sessions.isNotEmpty() -> SessionList(
+            sessions = state.sessions,
+            onOpenVideo = onOpenVideo,
+            onOpenSession = onOpenSession,
+        )
+
+        /*
+         * The session list failed and there is nothing to fall back to.
+         *
+         * This used to fall through to the merged notification feed. That feed
+         * looks very much like a session list — same avatars, names and "3小时前"
+         * timestamps — but its rows open *videos*, not chats. When `get_sessions`
+         * lost a rate-limit race (code -509) the list silently switched to it,
+         * and the next tap on "a friend" opened the video from the @我
+         * notification instead. Saying "私信加载失败" with a retry is honest and
+         * removes the mis-tap.
+         */
+        state.sessionsLoaded && state.sessionsError != null -> StateBlock(
+            title = "私信加载失败",
+            subtitle = state.sessionsError,
+            actionLabel = "重试",
+            onAction = onRetry,
+        )
+
+        !state.sessionsLoaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = YtColors.Red)
+        }
+
+        // Sessions genuinely empty (no conversations at all): the merged feed is
+        // still useful, and its rows are notifications rather than friends.
+        else -> NotificationFeed(
+            state = state,
+            onLoadMore = onLoadMore,
+            onLoadMoreAll = onLoadMoreAll,
+            onRetry = onRetry,
+            onOpenVideo = onOpenVideo,
+            sessionsError = null,
         )
     }
 }

@@ -2566,23 +2566,33 @@ private fun ChromeIcon(
     tint: Color,
     onClick: () -> Unit,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(21.dp),
+    // A fixed 40dp `IconButton` was the reason a count looked "wrong" in
+    // landscape: 21dp of icon + 4dp gap left ~15dp for the text, so `1501` and
+    // `1.6万` were clipped to roughly two characters. The chip now takes the
+    // width its content needs; the title next to it has `weight(1f)` and gives
+    // way.
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(21.dp),
+        )
+        if (count > 0) {
+            Spacer(Modifier.width(3.dp))
+            Text(
+                text = formatCount(count),
+                color = tint,
+                fontSize = 11.sp,
+                maxLines = 1,
+                softWrap = false,
             )
-            if (count > 0) {
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = formatCount(count),
-                    color = tint,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                )
-            }
         }
     }
 }
