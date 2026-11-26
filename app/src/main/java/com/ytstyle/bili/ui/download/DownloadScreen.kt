@@ -137,6 +137,7 @@ private fun DownloadRow(
                     // resumed or deleted here, the other client owns the files.
                     text = (
                         listOf(item.videoLabel, item.audioLabel).filter { it.isNotEmpty() } +
+                            listOfNotNull("Shizuku 直读".takeIf { item.externalShell }) +
                             listOfNotNull("其他客户端".takeIf { item.external })
                         ).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,

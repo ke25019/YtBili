@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ytstyle.bili.data.download.DownloadItem
 import com.ytstyle.bili.data.download.DownloadStore
+import com.ytstyle.bili.data.extcache.ShizukuShell
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,6 +34,11 @@ data class OfflinePlayerUiState(
 @HiltViewModel
 class OfflinePlayerViewModel @Inject constructor(
     store: DownloadStore,
+    /**
+     * Needed only for `externalShell` items: their paths belong to another app
+     * and are read through Binder-opened descriptors, not `File`.
+     */
+    val shizuku: ShizukuShell,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 

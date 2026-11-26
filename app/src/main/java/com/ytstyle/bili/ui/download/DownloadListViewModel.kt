@@ -67,7 +67,11 @@ class DownloadListViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            settings.externalCache.collect { enabled ->
+            // Re-sync when the switch *or* the reader mode changes: switching
+            // from 复制导入 to Shizuku 直读 must replace the entries' paths.
+            combine(settings.externalCache, settings.externalCacheMode) { enabled, mode ->
+                enabled to mode
+            }.collect { (enabled, _) ->
                 if (enabled) externalSync.sync() else externalSync.drop()
             }
         }

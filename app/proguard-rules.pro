@@ -29,3 +29,13 @@
 
 # Hilt
 -keep class dagger.hilt.** { *; }
+
+# Shizuku UserService: the class is instantiated BY NAME in a separate process
+# (Shizuku's app_process), so R8 must not rename or remove it, and it must keep
+# both constructors. The AIDL interface/stub are reflected over Binder.
+-keep class com.ytstyle.bili.data.extcache.ExtCacheShellService { *; }
+-keep class com.ytstyle.bili.data.extcache.IExtCacheService { *; }
+-keep class com.ytstyle.bili.data.extcache.IExtCacheService$Stub { *; }
+-keep class com.ytstyle.bili.data.extcache.IExtCacheService$Stub$Proxy { *; }
+-dontwarn rikka.shizuku.**
+-dontwarn moe.shizuku.**

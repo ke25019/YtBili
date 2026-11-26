@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import com.ytstyle.bili.data.extcache.IExtCacheService
+import com.ytstyle.bili.data.extcache.ShizukuShell
 import com.ytstyle.bili.data.log.AppLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,9 @@ data class ExternalScan(
     val hasAccess: Boolean = true,
     val items: List<DownloadItem> = emptyList(),
     val roots: List<ExternalRootReport> = emptyList(),
+    /** True when the entries were read through the Shizuku user service. */
+    val viaShizuku: Boolean = false,
+    val shizukuIdentity: String = "",
 ) {
     val entries: Int get() = roots.sumOf { it.entries }
 
@@ -75,6 +80,8 @@ data class ExternalScan(
 @Singleton
 class ExternalCache @Inject constructor(
     @ApplicationContext private val context: Context,
+    /** Only used by [scanViaShizuku]; the copy path never touches it. */
+    private val shizuku: ShizukuShell,
 ) {
 
     /** Packages whose cache we know how to read, most likely first. */
@@ -237,6 +244,141 @@ class ExternalCache @Inject constructor(
         val root = Environment.getExternalStorageDirectory().absolutePath
         return file.absolutePath.removePrefix(root).let {
             if (it.startsWith("/")) "/sdcard$it" else file.absolutePath
+        }
+    }
+
+    /**
+     * Scans through the Shizuku user service instead of the filesystem.
+     *
+     * This is the mode that actually works on Android 11+: the helper process
+     * runs as shell/root, so `Android/data/tv.danmaku.bili` is readable there.
+     * The returned items carry the official client's paths and
+     * `externalShell = true`; playback reads them through Binder-opened file
+     * descriptors ([com.ytstyle.bili.data.extcache.ShizukuDataSource]), so
+     * **nothing is copied**.
+     */
+    suspend fun scanViaShizuku(): ExternalScan = withContext(Dispatchers.IO) {
+        val service = shizuku.awaitService()
+        if (service == null) {
+            AppLog.w("shizuku", "external cache: user service unavailable")
+            return@withContext ExternalScan(
+                hasAccess = true,
+                viaShizuku = true,
+                shizukuIdentity = "",
+            )
+        }
+        val identity = runCatching { service.identity() }.getOrDefault("")
+
+        val reports = mutableListOf<ExternalRootReport>()
+        val found = mutableListOf<DownloadItem>()
+
+        shizukuRoots().forEach { root ->
+            val entries = runCatching {
+                service.findEntries(root, MAX_SEARCH_DEPTH).toList()
+            }.getOrElse {
+                AppLog.w("download", "shizuku findEntries failed: ${it.javaClass.simpleName}")
+                emptyList()
+            }
+
+            var parsed = 0
+            val items = entries.mapNotNull { entry ->
+                shellItem(service, entry)?.also { parsed++ }
+            }
+            val rootExists = runCatching { service.exists(root) }.getOrDefault(entries.isNotEmpty())
+            reports += ExternalRootReport(
+                path = displayShellPath(root),
+                exists = rootExists,
+                readable = entries.isNotEmpty() || rootExists,
+                entries = entries.size,
+                parsed = parsed,
+                note = when {
+                    entries.isEmpty() -> "没有找到 entry.json"
+                    parsed < entries.size -> "${entries.size - parsed} 个缓存不完整或无法解析"
+                    else -> ""
+                },
+            )
+            found += items
+        }
+
+        val unique = LinkedHashMap<String, DownloadItem>()
+        found.forEach { item ->
+            val previous = unique[item.id]
+            if (previous == null || item.videoBytes > previous.videoBytes) unique[item.id] = item
+        }
+
+        AppLog.i(
+            "shizuku",
+            "external cache scan: entries=${reports.sumOf { it.entries }}, items=${unique.size}",
+        )
+        ExternalScan(
+            hasAccess = true,
+            items = unique.values.toList(),
+            roots = reports,
+            viaShizuku = true,
+            shizukuIdentity = identity,
+        )
+    }
+
+    /** One `entry.json` read and its media located through [service]. */
+    private fun shellItem(service: IExtCacheService, entryPath: String): DownloadItem? {
+        val text = runCatching { service.readText(entryPath) }.getOrNull() ?: return null
+        val dir = entryPath.substringBeforeLast('/', "")
+        if (dir.isEmpty()) return null
+        val meta = ExternalCacheParser.parseMeta(text, dir) ?: return null
+
+        val video = shellMedia(service, dir, meta.typeTag, "video.m4s") ?: return null
+        val videoBytes = runCatching { service.length(video) }.getOrDefault(0L)
+        if (videoBytes <= 0) return null
+        val audio = shellMedia(service, dir, meta.typeTag, "audio.m4s")
+        val audioBytes = audio?.let { runCatching { service.length(it) }.getOrDefault(0L) } ?: 0L
+
+        return ExternalCacheParser.shellItem(
+            meta = meta,
+            videoPath = video,
+            videoBytes = videoBytes,
+            audioPath = audio.orEmpty(),
+            audioBytes = audioBytes,
+        )
+    }
+
+    /**
+     * Finds a track under [dir], preferring the quality directory named by
+     * `type_tag` and otherwise the largest file found.
+     */
+    private fun shellMedia(
+        service: IExtCacheService,
+        dir: String,
+        typeTag: String,
+        name: String,
+    ): String? {
+        val tagged = typeTag.trim().takeIf { it.isNotEmpty() }?.let { tag -> "$dir/$tag/$name" }
+        if (tagged != null &&
+            runCatching { service.exists(tagged) && service.length(tagged) > 0 }.getOrDefault(false)
+        ) {
+            return tagged
+        }
+        val candidates = runCatching { service.findFiles(dir, name, 3).toList() }
+            .getOrDefault(emptyList())
+        if (candidates.isEmpty()) return null
+        return candidates.maxByOrNull { path ->
+            runCatching { service.length(path) }.getOrDefault(0L)
+        }
+    }
+
+    /** The roots the shell process should look in (absolute paths). */
+    private fun shizukuRoots(): List<String> {
+        val storage = Environment.getExternalStorageDirectory().absolutePath
+        return buildList {
+            packages.forEach { pkg -> add("$storage/Android/data/$pkg/download") }
+            add("$storage/Download/BiliCache")
+            add("$storage/BiliCache")
+        }.distinct()
+    }
+
+    private fun displayShellPath(path: String): String {
+        val root = Environment.getExternalStorageDirectory().absolutePath
+        return path.removePrefix(root).let {
+            if (it.startsWith("/")) "/sdcard$it" else path
         }
     }
 

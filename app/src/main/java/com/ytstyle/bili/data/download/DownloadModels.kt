@@ -69,6 +69,12 @@ data class DownloadItem(
      * experimental toggle is turned off.
      */
     val external: Boolean = false,
+    /**
+     * True when [videoPath]/[audioPath] point into another app's cache and must
+     * be read through the Shizuku user service (as file descriptors). A plain
+     * `File` cannot open those paths on Android 11+.
+     */
+    val externalShell: Boolean = false,
 ) {
     /** Combined on-disk size, used by the manager screen. */
     val totalBytes: Long get() = videoBytes + audioBytes

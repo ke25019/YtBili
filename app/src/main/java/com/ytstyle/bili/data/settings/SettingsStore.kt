@@ -79,6 +79,25 @@ enum class AudioPreference(val id: Int, val label: String) {
     }
 }
 
+/**
+ * How the experimental external-cache feature reaches another client's files.
+ *
+ * `Auto` prefers Shizuku when it is installed and authorised, and falls back to
+ * the copy import otherwise. The copy mode is what earlier versions shipped: it
+ * reads `Android/data` directly on Android 10 and below, and elsewhere needs the
+ * files copied into a public folder first.
+ */
+enum class ExternalCacheMode(val id: String, val label: String) {
+    Auto("auto", "自动（优先 Shizuku）"),
+    Shizuku("shizuku", "Shizuku 直读"),
+    Copy("copy", "复制导入"),
+    ;
+
+    companion object {
+        fun fromId(id: String?): ExternalCacheMode = entries.firstOrNull { it.id == id } ?: Auto
+    }
+}
+
 /** Danmaku on/off defaults to on, but is remembered across sessions. */
 @Singleton
 class SettingsStore @Inject constructor(
@@ -124,11 +143,20 @@ class SettingsStore @Inject constructor(
          */
         val EXTERNAL_CACHE = booleanPreferencesKey("external_cache")
 
+        /** How external-cache import reaches the files; see [ExternalCacheMode]. */
+        val EXTERNAL_CACHE_MODE = stringPreferencesKey("external_cache_mode")
+
         // 音画设置: the quality the player asks for when it opens a video, and
         // the audio track it prefers. Stored as strings so a future tier can be
         // added without a migration.
         val DEFAULT_QUALITY = stringPreferencesKey("default_quality")
         val AUDIO_PREFERENCE = stringPreferencesKey("audio_preference")
+
+        /** Prefer H.264 when a tier is offered in several codecs. */
+        val PREFER_AVC = booleanPreferencesKey("prefer_avc")
+
+        /** Cap the starting quality at the screen's short side. */
+        val AUTO_QUALITY = booleanPreferencesKey("auto_quality")
 
         // 应用内更新: whether to check on launch, and which channel to follow.
         val AUTO_UPDATE = booleanPreferencesKey("auto_update")
@@ -198,6 +226,38 @@ class SettingsStore @Inject constructor(
 
     suspend fun setExternalCache(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.EXTERNAL_CACHE] = enabled }
+    }
+
+    /** Which reader the external-cache feature uses. */
+    val externalCacheMode: Flow<ExternalCacheMode> =
+        context.settingsDataStore.data.map { ExternalCacheMode.fromId(it[Keys.EXTERNAL_CACHE_MODE]) }
+
+    suspend fun setExternalCacheMode(mode: ExternalCacheMode) {
+        context.settingsDataStore.edit { it[Keys.EXTERNAL_CACHE_MODE] = mode.id }
+    }
+
+    /**
+     * Prefer H.264 over HEVC/AV1 when one tier offers several codecs.
+     *
+     * On by default: HEVC hardware decoders are the usual reason "this video
+     * will not play but switching quality fixes it".
+     */
+    val preferAvc: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[Keys.PREFER_AVC] ?: true }
+
+    suspend fun setPreferAvc(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.PREFER_AVC] = enabled }
+    }
+
+    /**
+     * Cap the *starting* quality at the screen's short side, the way Bilibili's
+     * own "自动" quality does. A manual quality choice is never capped.
+     */
+    val autoQualityByScreen: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[Keys.AUTO_QUALITY] ?: true }
+
+    suspend fun setAutoQualityByScreen(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.AUTO_QUALITY] = enabled }
     }
 
     /** Experimental: refresh the home feed when the app opens (default on). */

@@ -114,5 +114,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!--
+            Shizuku's binder bridge. The authority must be ${applicationId}.shizuku;
+            the permission keeps other apps from binding it directly. Required for
+            the experimental "read another client's cache through Shizuku" mode.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
     </application>
 </manifest>

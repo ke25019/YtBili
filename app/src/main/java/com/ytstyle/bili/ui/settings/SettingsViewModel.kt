@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.ytstyle.bili.data.download.ExternalCache
 import com.ytstyle.bili.data.download.ExternalCacheSync
 import com.ytstyle.bili.data.download.ExternalScan
+import com.ytstyle.bili.data.extcache.ShizukuShell
+import com.ytstyle.bili.data.extcache.ShizukuState
+import com.ytstyle.bili.data.settings.ExternalCacheMode
 import com.ytstyle.bili.data.session.AccountStore
 import com.ytstyle.bili.data.session.SavedAccount
 import com.ytstyle.bili.data.session.SessionStore
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -45,6 +49,7 @@ class SettingsViewModel @Inject constructor(
     /** Named for the scanner, not the switch: `externalCache` below is the toggle. */
     private val externalCacheAccess: ExternalCache,
     private val externalSync: ExternalCacheSync,
+    private val shizuku: ShizukuShell,
 ) : ViewModel() {
 
     /**
@@ -110,6 +115,13 @@ class SettingsViewModel @Inject constructor(
     val externalCache: StateFlow<Boolean> = settings.externalCache
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /** How that cache is read: Shizuku descriptors / copy / automatic. */
+    val externalMode: StateFlow<ExternalCacheMode> = settings.externalCacheMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ExternalCacheMode.Auto)
+
+    /** Shizuku install / authorisation / connection state for the panel. */
+    val shizukuState: StateFlow<ShizukuState> = shizuku.state
+
     private val _externalScan = MutableStateFlow(ExternalCacheUiState())
     val externalScan: StateFlow<ExternalCacheUiState> = _externalScan.asStateFlow()
 
@@ -125,6 +137,19 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setExternalMode(mode: ExternalCacheMode) {
+        viewModelScope.launch {
+            settings.setExternalCacheMode(mode)
+            shizuku.refresh()
+            if (settings.externalCache.first()) scanExternalCache()
+        }
+    }
+
+    /** Re-reads Shizuku availability; call when the settings page is shown. */
+    fun refreshShizuku() = shizuku.refresh()
+
+    fun requestShizukuPermission() = shizuku.requestPermission()
+
     /**
      * Runs one import now.
      *
@@ -135,6 +160,7 @@ class SettingsViewModel @Inject constructor(
         if (_externalScan.value.scanning) return
         viewModelScope.launch {
             _externalScan.update { it.copy(scanning = true) }
+            shizuku.refresh()
             val scan = runCatching { externalSync.sync() }.getOrNull()
             _externalScan.value = ExternalCacheUiState(scanning = false, scan = scan)
         }
@@ -161,6 +187,18 @@ class SettingsViewModel @Inject constructor(
 
     val audioPreference: StateFlow<AudioPreference> = settings.audioPreference
         .stateIn(viewModelScope, SharingStarted.Eagerly, AudioPreference.Auto)
+
+    /** Prefer H.264 when a quality tier offers several codecs. */
+    val preferAvc: StateFlow<Boolean> = settings.preferAvc
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setPreferAvc(enabled: Boolean) = launch { settings.setPreferAvc(enabled) }
+
+    /** Cap the starting quality at the screen's short side. */
+    val autoQualityByScreen: StateFlow<Boolean> = settings.autoQualityByScreen
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setAutoQualityByScreen(enabled: Boolean) = launch { settings.setAutoQualityByScreen(enabled) }
 
     fun setDefaultQuality(qn: Int) = launch { settings.setDefaultQuality(qn) }
 

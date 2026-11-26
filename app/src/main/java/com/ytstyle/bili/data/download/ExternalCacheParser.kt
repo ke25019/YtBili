@@ -8,6 +8,25 @@ import kotlinx.serialization.json.longOrNull
 import java.io.File
 
 /**
+ * Parses the metadata half of one `entry.json` from the official client's cache.
+ *
+ * Kept separate from [parse] because the Shizuku reader has the JSON as a
+ * string (read by a shell process) and locates the media through Binder instead
+ * of `File`; both paths need the same title / BV id / quality label.
+ */
+internal data class ExternalEntryMeta(
+    val id: String,
+    val title: String,
+    val cover: String,
+    val bvid: String,
+    val cid: Long,
+    val videoLabel: String,
+    val createdAt: Long,
+    /** Quality directory name (`112`, `80`, …) used to find the right track. */
+    val typeTag: String,
+)
+
+/**
  * Parses one `entry.json` from the official client's offline cache.
  *
  * ## What the directory actually looks like
@@ -52,12 +71,34 @@ internal object ExternalCacheParser {
 
     private fun parseEntry(entryFile: File): DownloadItem? {
         val dir = entryFile.parentFile ?: return null
-        val root = json.parseToJsonElement(entryFile.readText()) as? JsonObject ?: return null
+        val meta = parseMeta(entryFile.readText(), dir.absolutePath, dir.lastModified())
+            ?: return null
+        val (video, audio) = findMedia(dir, meta.typeTag) ?: return null
+        return meta.toItem(
+            videoPath = video.absolutePath,
+            audioPath = audio?.absolutePath.orEmpty(),
+            videoBytes = video.length(),
+            audioBytes = audio?.length() ?: 0L,
+            shell = false,
+        )
+    }
+
+    /**
+     * Reads everything except the media paths.
+     *
+     * Returns null for a half-finished download (`is_completed == false`) or a
+     * document that is not JSON — both are normal states while the official
+     * client is writing.
+     */
+    fun parseMeta(
+        text: String,
+        dirPath: String,
+        fallbackModified: Long = 0L,
+    ): ExternalEntryMeta? = runCatching {
+        val root = json.parseToJsonElement(text) as? JsonObject ?: return null
 
         // A half-finished download has metadata but no usable track yet.
         if (root.boolean("is_completed") == false) return null
-
-        val (video, audio) = findMedia(dir, root.text("type_tag")) ?: return null
 
         val pageData = root["page_data"] as? JsonObject
         val episode = root["ep"] as? JsonObject
@@ -78,22 +119,58 @@ internal object ExternalCacheParser {
         )
         val pageLabel = if (page > 1) "P$page" else ""
 
-        return DownloadItem(
-            id = itemId(avid, cid, dir),
+        ExternalEntryMeta(
+            id = itemId(avid, cid, dirPath),
             title = title,
             cover = root.text("cover").ifBlank { episode?.text("cover").orEmpty() },
             bvid = root.text("bvid").ifBlank { bvidOf(avid) },
             cid = cid,
             videoLabel = listOf(quality, pageLabel).filter { it.isNotEmpty() }.joinToString(" · "),
-            videoPath = video.absolutePath,
-            audioPath = audio?.absolutePath.orEmpty(),
-            videoBytes = video.length(),
-            audioBytes = audio?.length() ?: 0L,
-            state = DownloadState.DONE,
-            createdAt = createdAt(root, dir),
-            external = true,
+            createdAt = createdAt(root, fallbackModified),
+            typeTag = root.text("type_tag"),
         )
-    }
+    }.getOrNull()
+
+    private fun ExternalEntryMeta.toItem(
+        videoPath: String,
+        audioPath: String,
+        videoBytes: Long,
+        audioBytes: Long,
+        shell: Boolean,
+    ): DownloadItem = DownloadItem(
+        id = id,
+        title = title,
+        cover = cover,
+        bvid = bvid,
+        cid = cid,
+        videoLabel = videoLabel,
+        videoPath = videoPath,
+        audioPath = audioPath,
+        videoBytes = videoBytes,
+        audioBytes = audioBytes,
+        state = DownloadState.DONE,
+        createdAt = createdAt,
+        external = true,
+        externalShell = shell,
+    )
+
+    /**
+     * Builds an item whose media paths were resolved through the Shizuku shell
+     * (no `File` access is possible on those paths).
+     */
+    fun shellItem(
+        meta: ExternalEntryMeta,
+        videoPath: String,
+        videoBytes: Long,
+        audioPath: String,
+        audioBytes: Long,
+    ): DownloadItem = meta.toItem(
+        videoPath = videoPath,
+        audioPath = audioPath,
+        videoBytes = videoBytes,
+        audioBytes = audioBytes,
+        shell = true,
+    )
 
     /**
      * Locates the pair of tracks below [dir].
@@ -128,15 +205,15 @@ internal object ExternalCacheParser {
     }
 
     /** `external-<avid>-<cid>`, with a path hash when the ids are missing. */
-    private fun itemId(avid: Long, cid: Long, dir: File): String {
+    private fun itemId(avid: Long, cid: Long, dirPath: String): String {
         if (avid > 0 && cid > 0) return "external-$avid-$cid"
         if (avid > 0) return "external-$avid"
-        return "external-" + dir.absolutePath.hashCode().toUInt().toString(16)
+        return "external-" + dirPath.hashCode().toUInt().toString(16)
     }
 
     /** `time_create_stamp` is milliseconds in the official client. */
-    private fun createdAt(root: JsonObject, dir: File): Long {
-        val raw = root.number("time_create_stamp") ?: return dir.lastModified()
+    private fun createdAt(root: JsonObject, fallbackModified: Long): Long {
+        val raw = root.number("time_create_stamp") ?: return fallbackModified
         // Tolerate a seconds-resolution value from an older client.
         return if (raw in 1..9_999_999_999L) raw * 1000 else raw
     }

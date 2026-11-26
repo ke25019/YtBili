@@ -135,8 +135,14 @@ android {
         // arrow removed, the mobile-data note cleared once playback starts, and
         // CDN mirror failover for videos that only played after a quality
         // switch. Version chosen by the user.
-        versionCode = 32
-        versionName = "1.14.0-beta"
+        // 1.14.1-beta: playback now chooses the stream the way the official app
+        // does (H.264 first, only codecs the device can decode, starting quality
+        // capped at the screen), the tier picker gained 4K/1080P+, and the
+        // experimental cache reader gained a Shizuku mode that reads the official
+        // client's files through Binder file descriptors — no copy, and no "all
+        // files access" permission. Version chosen by the user.
+        versionCode = 33
+        versionName = "1.14.1-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }
@@ -176,6 +182,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        // The Shizuku UserService is an AIDL interface running in a separate
+        // process as shell/root; it passes file descriptors back to the app.
+        aidl = true
     }
 
     packaging {
@@ -228,6 +237,12 @@ dependencies {
 
     // Local QR generation for the login screen.
     implementation(libs.zxing.core)
+
+    // Shizuku: lets a user-authorised shell/root process read another client's
+    // `Android/data` cache and hand the app file descriptors. Small (~32 KB of
+    // classes) and only active once the user installs and authorises Shizuku.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // JVM unit tests. These cover the pure logic that cannot be verified by
     // compiling alone: the hand-written protobuf danmaku reader, WBI signing,

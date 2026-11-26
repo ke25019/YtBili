@@ -34,6 +34,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,8 +60,10 @@ import androidx.compose.ui.platform.LocalContext
 import com.ytstyle.bili.BuildConfig
 import com.ytstyle.bili.data.log.AppLog
 import com.ytstyle.bili.data.net.NetworkStatus
+import com.ytstyle.bili.data.extcache.ShizukuState
 import com.ytstyle.bili.data.settings.AudioPreference
 import com.ytstyle.bili.data.settings.AutoplayMode
+import com.ytstyle.bili.data.settings.ExternalCacheMode
 import com.ytstyle.bili.data.settings.ThemeMode
 import com.ytstyle.bili.data.update.UpdateChannel
 import com.ytstyle.bili.ui.player.DanmakuMode
@@ -118,6 +121,12 @@ fun SettingsScreen(
 ) {
     var page by remember { mutableStateOf(SettingsPage.Root) }
 
+    // Shizuku may have been installed/started/authorised while the app was in
+    // the background; re-read its state whenever the experimental page is shown.
+    LaunchedEffect(page) {
+        if (page == SettingsPage.Experiments) viewModel.refreshShizuku()
+    }
+
     /**
      * The system back gesture mirrors the arrow next to the title, one level at
      * a time.
@@ -141,6 +150,8 @@ fun SettingsScreen(
     val homeGrid by viewModel.homeGrid.collectAsStateWithLifecycle()
     val defaultQuality by viewModel.defaultQuality.collectAsStateWithLifecycle()
     val audioPreference by viewModel.audioPreference.collectAsStateWithLifecycle()
+    val preferAvc by viewModel.preferAvc.collectAsStateWithLifecycle()
+    val autoQualityByScreen by viewModel.autoQualityByScreen.collectAsStateWithLifecycle()
     val isLoggedIn by viewModel.isLoggedIn.collectAsStateWithLifecycle()
     val uname by viewModel.uname.collectAsStateWithLifecycle()
     val savedAccounts by viewModel.savedAccounts.collectAsStateWithLifecycle()
@@ -149,6 +160,8 @@ fun SettingsScreen(
     val updateChannel by viewModel.updateChannel.collectAsStateWithLifecycle()
     val externalCache by viewModel.externalCache.collectAsStateWithLifecycle()
     val externalScan by viewModel.externalScan.collectAsStateWithLifecycle()
+    val externalMode by viewModel.externalMode.collectAsStateWithLifecycle()
+    val shizuku by viewModel.shizukuState.collectAsStateWithLifecycle()
     val homeAutoRefresh by viewModel.homeAutoRefresh.collectAsStateWithLifecycle()
 
     // Sampled when the page opens: the user is here to change a preference, and
@@ -238,19 +251,53 @@ fun SettingsScreen(
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                     )
-                    if (externalCache && !hasAllFilesAccess) {
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            text = "去授予「所有文件访问权限」",
-                            color = YtColors.Red,
-                            fontSize = 13.sp,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { openAllFilesAccessSettings(context) }
-                                .padding(vertical = 6.dp),
-                        )
-                    }
                     if (externalCache) {
+                        Spacer(Modifier.height(14.dp))
+                        SectionTitle("读取方式")
+                        ExternalCacheMode.entries.forEach { mode ->
+                            PickRow(
+                                label = mode.label,
+                                selected = mode == externalMode,
+                                onClick = { viewModel.setExternalMode(mode) },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Text(
+                            text = when (externalMode) {
+                                ExternalCacheMode.Auto ->
+                                    "有 Shizuku 时直读官方缓存；没有就按复制导入处理。"
+                                ExternalCacheMode.Shizuku ->
+                                    "通过 Shizuku 直接读取官方缓存，不复制、不占额外空间；" +
+                                        "需要安装并授权 Shizuku。"
+                                ExternalCacheMode.Copy ->
+                                    "读取公共目录（或 Android 10 以下的 Android/data）；" +
+                                        "Android 11 起需要先把缓存复制到 Download/BiliCache。"
+                            },
+                            color = AppTheme.colors.onBackgroundSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+
+                        if (externalMode != ExternalCacheMode.Copy) {
+                            Spacer(Modifier.height(10.dp))
+                            ShizukuStatus(
+                                state = shizuku,
+                                onAuthorize = viewModel::requestShizukuPermission,
+                            )
+                        }
+                        if (externalMode == ExternalCacheMode.Copy && !hasAllFilesAccess) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = "去授予「所有文件访问权限」",
+                                color = YtColors.Red,
+                                fontSize = 13.sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { openAllFilesAccessSettings(context) }
+                                    .padding(vertical = 6.dp),
+                            )
+                        }
+
                         ExternalScanReport(
                             state = externalScan,
                             onRescan = viewModel::scanExternalCache,
@@ -389,6 +436,26 @@ fun SettingsScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                     }
+
+                    Spacer(Modifier.height(18.dp))
+                    SectionTitle("解码与清晰度")
+                    // Same tier is usually offered as AVC + HEVC + AV1. The
+                    // highest-bandwidth pick is almost always HEVC, and a broken
+                    // HEVC decoder is the classic "this video will not play but
+                    // switching quality fixes it" cause.
+                    SwitchRow(
+                        "优先使用 H.264",
+                        "兼容性最好；关闭后优先 AV1 / HEVC，流量更省但更挑设备",
+                        preferAvc,
+                        viewModel::setPreferAvc,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SwitchRow(
+                        "按屏幕自动限制起始清晰度",
+                        "存储的画质高于屏幕时自动降一档；手动切换不受影响",
+                        autoQualityByScreen,
+                        viewModel::setAutoQualityByScreen,
+                    )
                 }
 
                 SettingsPage.Danmaku -> {
@@ -1003,6 +1070,60 @@ private fun InfoRow(label: String, value: String) {
 }
 
 /**
+ * Shizuku install / authorisation state, with the one action it needs.
+ *
+ * Shizuku is a separate app that the user starts (root, or ADB/wireless
+ * debugging); this app can only report what it finds and ask for permission.
+ */
+@Composable
+private fun ShizukuStatus(
+    state: ShizukuState,
+    onAuthorize: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppTheme.colors.chipBackground)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = when {
+                !state.installed ->
+                    "未检测到 Shizuku。安装并启动 Shizuku 后，才能直读官方客户端的缓存。"
+                !state.authorized -> "已安装 Shizuku，尚未授权。"
+                state.connected -> "Shizuku 已连接（${state.identity.ifBlank { "身份未知" }}）。"
+                else -> "正在连接 Shizuku 服务…"
+            },
+            color = AppTheme.colors.onBackgroundSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+        if (state.installed && !state.authorized) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "授权 Shizuku",
+                color = YtColors.Red,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onAuthorize)
+                    .padding(vertical = 6.dp),
+            )
+        }
+        state.error?.let { message ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = message,
+                color = YtColors.Red,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        }
+    }
+}
+
+/**
  * What the last external-cache scan found, and why it found nothing.
  *
  * The switch used to import silently, so "开了没用" had no visible cause. This
@@ -1027,6 +1148,9 @@ private fun ExternalScanReport(
             text = when {
                 state.scanning -> "正在检测…"
                 scan == null -> "检测结果：尚未检测"
+                scan.viaShizuku && scan.shizukuIdentity.isBlank() ->
+                    "检测结果：Shizuku 服务未连接"
+                scan.viaShizuku -> "检测结果：Shizuku 直读，找到 ${scan.items.size} 个缓存"
                 !scan.hasAccess -> "检测结果：未授予「所有文件访问权限」"
                 scan.items.isNotEmpty() -> "检测结果：找到 ${scan.items.size} 个可播放缓存"
                 scan.entries > 0 -> "检测结果：找到 ${scan.entries} 个 entry.json，但没有完整的缓存"
@@ -1060,6 +1184,16 @@ private fun ExternalScanReport(
                     )
                 }
 
+            if (report.viaShizuku && report.shizukuIdentity.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "读取方式：Shizuku 直读（${report.shizukuIdentity}）",
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+            }
+
             if (!report.hasAccess) {
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -1068,6 +1202,20 @@ private fun ExternalScanReport(
                     color = AppTheme.colors.onBackgroundSecondary,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
+                )
+            } else if (report.items.isEmpty() && report.viaShizuku) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (report.shizukuIdentity.isBlank()) {
+                        "Shizuku 没有连上。请在设置里授权 Shizuku，或改回「复制导入」。"
+                    } else {
+                        "Shizuku 已连接，但没有找到可播放的缓存。" +
+                            "确认官方客户端里确实有下载完成的视频；" +
+                            "刚下载完的文件还在写入时会被跳过。"
+                    },
+                    color = AppTheme.colors.onBackgroundSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             } else if (report.items.isEmpty()) {
                 Spacer(Modifier.height(6.dp))

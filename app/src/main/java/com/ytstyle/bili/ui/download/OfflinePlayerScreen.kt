@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -45,12 +46,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,6 +71,8 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.ytstyle.bili.data.download.DownloadItem
+import com.ytstyle.bili.data.extcache.ShizukuDataSource
+import com.ytstyle.bili.data.extcache.ShizukuShell
 import com.ytstyle.bili.ui.components.CompactSlider
 import com.ytstyle.bili.ui.history.SimpleTopBar
 import com.ytstyle.bili.ui.theme.AppTheme
@@ -94,8 +100,11 @@ fun OfflinePlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val item = state.item
     // Checked once per item: the first frame must not block on file IO.
-    val fileExists = remember(item?.videoPath) {
-        item != null && item.videoPath.isNotBlank() && File(item.videoPath).exists()
+    // A Shizuku item's path belongs to another app and `File.exists()` is
+    // always false there; the descriptor open reports a real failure instead.
+    val fileExists = remember(item?.videoPath, item?.externalShell) {
+        item != null && item.videoPath.isNotBlank() &&
+            (item.externalShell || File(item.videoPath).exists())
     }
     // Landscape fills the frame, so the title bar would only steal height from
     // the picture; the landscape control bar carries the back arrow instead.
@@ -126,7 +135,15 @@ fun OfflinePlayerScreen(
             }
 
             // A new id re-enters the player instead of reusing the old position.
-            else -> key(item.id) { OfflinePlayerContent(item, onBack, state.others, viewModel::select) }
+            else -> key(item.id) {
+                OfflinePlayerContent(
+                    item = item,
+                    onBack = onBack,
+                    others = state.others,
+                    onSelect = viewModel::select,
+                    shizuku = viewModel.shizuku,
+                )
+            }
         }
     }
 }
@@ -138,6 +155,7 @@ private fun OfflinePlayerContent(
     onBack: () -> Unit,
     others: List<DownloadItem>,
     onSelect: (String) -> Unit,
+    shizuku: ShizukuShell,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -203,6 +221,9 @@ private fun OfflinePlayerContent(
         onDispose { exoPlayer.release() }
     }
 
+    /** Set when a Shizuku-backed item cannot be opened at all. */
+    var playbackError by remember { mutableStateOf<String?>(null) }
+
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -214,31 +235,71 @@ private fun OfflinePlayerContent(
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Only the Shizuku-backed rows need an explanation: a local file
+                // that failed is already reported by the playlist itself.
+                if (item.externalShell) {
+                    playbackError = "无法读取缓存（${error.errorCodeName}）"
+                }
+            }
         }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
     }
 
-    /** Builds the merged source from the two files. Runs once per item. */
-    LaunchedEffect(item.id, item.videoPath, item.audioPath) {
-        val videoFile = File(item.videoPath)
-        if (!videoFile.exists()) return@LaunchedEffect
+    /** Builds the merged source from the two tracks. Runs once per item. */
+    LaunchedEffect(item.id, item.videoPath, item.audioPath, item.externalShell) {
+        val videoSource: androidx.media3.exoplayer.source.MediaSource
+        val audioSource: androidx.media3.exoplayer.source.MediaSource?
 
-        // DefaultDataSource resolves `file:` URIs locally; using it (rather than
-        // a raw FileDataSource) keeps the door open for a network fallback.
-        val factory = DefaultDataSource.Factory(context)
-        val videoSource = ProgressiveMediaSource.Factory(factory)
-            .createMediaSource(MediaItem.fromUri(videoFile.toURI().toString()))
+        if (item.externalShell) {
+            // The official client's cache lives under another app's Android/data,
+            // which this process cannot open. Shizuku's helper process opens it
+            // and hands over descriptors; no copy is made.
+            val service = shizuku.awaitService()
+            if (service == null) {
+                playbackError = "Shizuku 未连接，无法读取官方缓存"
+                return@LaunchedEffect
+            }
+            videoSource = ProgressiveMediaSource.Factory(
+                ShizukuDataSource.Factory(shizuku, item.videoPath),
+            ).createMediaSource(MediaItem.fromUri("shizuku://video/${item.id}"))
+            audioSource = item.audioPath
+                .takeIf { it.isNotBlank() }
+                ?.takeIf { path ->
+                    runCatching { service.length(path) > 0 }.getOrDefault(false)
+                }
+                ?.let { path ->
+                    ProgressiveMediaSource.Factory(
+                        ShizukuDataSource.Factory(shizuku, path),
+                    ).createMediaSource(MediaItem.fromUri("shizuku://audio/${item.id}"))
+                }
+        } else {
+            val videoFile = File(item.videoPath)
+            if (!videoFile.exists()) return@LaunchedEffect
 
-        val audioFile = File(item.audioPath)
-        val source = if (audioFile.exists()) {
-            val audioSource = ProgressiveMediaSource.Factory(factory)
-                .createMediaSource(MediaItem.fromUri(audioFile.toURI().toString()))
+            // DefaultDataSource resolves `file:` URIs locally; using it (rather
+            // than a raw FileDataSource) keeps the door open for a network
+            // fallback.
+            val factory = DefaultDataSource.Factory(context)
+            videoSource = ProgressiveMediaSource.Factory(factory)
+                .createMediaSource(MediaItem.fromUri(videoFile.toURI().toString()))
+
+            val audioFile = File(item.audioPath)
+            audioSource = if (audioFile.exists()) {
+                ProgressiveMediaSource.Factory(factory)
+                    .createMediaSource(MediaItem.fromUri(audioFile.toURI().toString()))
+            } else {
+                null
+            }
+        }
+
+        val source = if (audioSource != null) {
             MergingMediaSource(videoSource, audioSource)
         } else {
             videoSource
         }
-
         exoPlayer.setMediaSource(source)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
@@ -300,6 +361,23 @@ private fun OfflinePlayerContent(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+
+            // Shizuku could not hand over a descriptor: say so instead of a
+            // permanently black picture.
+            playbackError?.let { message ->
+                Text(
+                    text = message,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 24.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xCC000000))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
 
             // Landscape 选集: the same panel idea as the streaming player's episode
             // list, listing the other cached videos by name. Portrait has the list

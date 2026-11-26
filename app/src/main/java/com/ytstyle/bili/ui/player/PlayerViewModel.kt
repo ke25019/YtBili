@@ -16,6 +16,7 @@ import com.ytstyle.bili.data.net.Owner
 import com.ytstyle.bili.data.net.PageList
 import com.ytstyle.bili.data.net.PgcEpisode
 import com.ytstyle.bili.data.net.PgcSeason
+import com.ytstyle.bili.data.player.VideoCapabilities
 import com.ytstyle.bili.data.net.PlayUrlData
 import com.ytstyle.bili.data.net.RecommendItem
 import com.ytstyle.bili.data.net.Reply
@@ -57,12 +58,16 @@ enum class ReplySort(val mode: Int, val label: String) {
 }
 
 /** Quality tiers Bilibili exposes, in the order the picker shows them. */
-enum class Quality(val qn: Int, val label: String) {
-    Q1080P60(116, "1080P60"),
-    Q1080P(80, "1080P"),
-    Q720P(64, "720P"),
-    Q480P(32, "480P"),
-    Q360P(16, "360P");
+enum class Quality(val qn: Int, val label: String, val height: Int) {
+    Q8K(127, "8K", 4320),
+    Q4K(120, "4K", 2160),
+    Q1080P60(116, "1080P60", 1080),
+    Q1080PPlus(112, "1080P+", 1080),
+    Q1080P(80, "1080P", 1080),
+    Q720P60(74, "720P60", 720),
+    Q720P(64, "720P", 720),
+    Q480P(32, "480P", 480),
+    Q360P(16, "360P", 360);
 
     companion object {
         /** Maps a stored preference back to a tier; unknown values fall to 1080P. */
@@ -513,12 +518,12 @@ class PlayerViewModel @Inject constructor(
 
             // 音画设置 has to be read *before* the first playurl call — the
             // quality is a request parameter, not something that can be applied
-            // after the stream has been resolved.
+            // after the stream has been resolved. Read outside `update`, whose
+            // lambda is not a suspend context.
+            val startQuality = initialQuality()
+            val startAudio = settings.audioPreference.first()
             _state.update {
-                it.copy(
-                    currentQuality = Quality.fromQn(settings.defaultQuality.first()),
-                    audioPreference = settings.audioPreference.first(),
-                )
+                it.copy(currentQuality = startQuality, audioPreference = startAudio)
             }
 
             // Emote images for the comment list. Anonymous callers get an empty
@@ -852,7 +857,7 @@ class PlayerViewModel @Inject constructor(
 
     // ---- streams ----
 
-    private fun applyPlayData(result: Result<PlayUrlData>) {
+    private suspend fun applyPlayData(result: Result<PlayUrlData>) {
         when (result) {
             is Result.Err -> _state.update {
                 it.copy(isLoading = false, error = result.message)
@@ -864,14 +869,14 @@ class PlayerViewModel @Inject constructor(
                 mirrorIndex = 0
 
                 // Pick within the tier Bilibili actually returned. Asking for
-                // 1080P on a video that only offers 480P silently yields 480P,
-                // and blindly taking the highest-bandwidth track would put a
-                // different tier on screen from the one the menu claims.
+                // 1080P on a video that only offers 480P silently yields 480P.
+                // The tier usually carries several codec variants (AVC / HEVC /
+                // AV1), so the choice is capability-aware: a decoder the device
+                // does not have is skipped, and H.264 is preferred unless the
+                // user asked for efficiency.
                 val wanted = data.quality.takeIf { it > 0 } ?: _state.value.currentQuality.qn
-                val video = dash?.video
-                    ?.filter { it.id == wanted }
-                    ?.maxByOrNull { it.bandwidth }
-                    ?: dash?.video?.maxByOrNull { it.bandwidth }
+                val preferAvc = settings.preferAvc.first()
+                val video = pickVideoTrack(dash?.video, wanted, preferAvc)
                 val audio = pickAudio(dash?.audio)
 
                 // The quality list is intersected with what the payload says is
@@ -899,6 +904,40 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
+     * Picks one video track out of the tier's codec variants.
+     *
+     * Bilibili returns AVC, HEVC and AV1 entries with the same `id` (quality).
+     * The old code took the highest bandwidth, which almost always meant HEVC —
+     * and a broken/absent HEVC decoder is exactly what makes one video fail
+     * while the next one plays. Now:
+     *
+     *  - tracks whose codec the device cannot decode at that size are dropped;
+     *  - H.264 is preferred when [preferAvc] is on (the compatible default);
+     *  - otherwise AV1 → HEVC → AVC, and bandwidth decides only within a codec.
+     *
+     * If nothing passes the capability check the unfiltered pool is used: the
+     * device may still have a software decoder that `MediaCodecList` under-
+     * reports, and letting ExoPlayer fail with a real error beats refusing to
+     * try.
+     */
+    private fun pickVideoTrack(
+        tracks: List<DashTrack>?,
+        wanted: Int,
+        preferAvc: Boolean,
+    ): DashTrack? {
+        if (tracks.isNullOrEmpty()) return null
+        val tier = tracks.filter { it.id == wanted }.ifEmpty { tracks }
+        val playable = tier.filter { VideoCapabilities.canDecode(it) }
+        val pool = playable.ifEmpty { tier }
+        return pool.sortedWith(
+            compareBy<DashTrack> { track ->
+                val rank = VideoCapabilities.rank(track.codecs)
+                if (preferAvc) rank else -rank
+            }.thenByDescending { it.bandwidth },
+        ).firstOrNull()
+    }
+
+    /**
      * Chooses the audio track, honouring 音画设置.
      *
      * A requested tier that the video does not offer falls back to the highest
@@ -911,6 +950,26 @@ class PlayerViewModel @Inject constructor(
             tracks.firstOrNull { it.id == preferred }?.let { return it }
         }
         return tracks.maxByOrNull { it.bandwidth }
+    }
+
+    /**
+     * The quality the first playurl call asks for.
+     *
+     * A manually chosen quality is respected as-is. The automatic cap only
+     * lowers the *starting* tier when the stored choice is larger than the
+     * screen's short side, which is what Bilibili's "自动" does — a 4K stream on
+     * a 1080P panel costs decode power and bandwidth without a visible gain.
+     */
+    private suspend fun initialQuality(): Quality {
+        val preferred = Quality.fromQn(settings.defaultQuality.first())
+        if (!settings.autoQualityByScreen.first()) return preferred
+        val screen = VideoCapabilities.screenShortSide(appContext)
+        if (preferred.height <= screen) return preferred
+        return Quality.entries
+            .filter { it.height <= screen }
+            .sortedWith(compareByDescending<Quality> { it.height }.thenBy { it.qn })
+            .firstOrNull()
+            ?: Quality.Q360P
     }
 
     /**
