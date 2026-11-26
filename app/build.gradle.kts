@@ -126,8 +126,17 @@ android {
         // 资源库 covers refresh on every visit to 我的. The SMS captcha payload
         // fix and the feed auto-refresh switch from the previous local-only
         // build are included. Version chosen by the user.
-        versionCode = 31
-        versionName = "1.13.8-beta"
+        //
+        // 1.14.0-beta: the peer's avatar in a 私信, tappable image messages, the
+        // dynamic detail page's real comment target and comment composer,
+        // unread badges refreshed on return, the partition recommendation feed
+        // (region/feed/rcmd) instead of a frozen ranking, a fixed-width seek bar,
+        // no leftover player frame when leaving, the duplicated audio-only back
+        // arrow removed, the mobile-data note cleared once playback starts, and
+        // CDN mirror failover for videos that only played after a quality
+        // switch. Version chosen by the user.
+        versionCode = 32
+        versionName = "1.14.0-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

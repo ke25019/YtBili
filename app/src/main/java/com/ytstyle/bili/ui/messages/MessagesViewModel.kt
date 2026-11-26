@@ -137,6 +137,21 @@ class MessagesViewModel @Inject constructor(
         _state.update { it.copy(selected = if (it.selected == category) null else category) }
     }
 
+    /**
+     * Refreshes when the message centre is shown again.
+     *
+     * Reading a conversation marks it read through `update_ack`, but the badges
+     * on this screen are server state — they were only fetched once, so the red
+     * dot survived returning from a chat. Re-entering the destination recreates
+     * its composition, which is exactly one call per visit; the first visit is
+     * skipped because [init] is already loading.
+     */
+    fun onScreenShown() {
+        val current = _state.value
+        if (!loadedOnce || current.isRefreshing || current.loggedOut) return
+        refresh()
+    }
+
     /** Appends the next page of one category. */
     fun loadMore(category: MessageCategory) {
         val snapshot = _state.value

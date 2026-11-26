@@ -39,6 +39,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -208,6 +210,15 @@ fun DynamicDetailScreen(
                             fontWeight = FontWeight.Medium,
                             fontSize = 15.sp,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                    }
+                    item(key = "comment-composer") {
+                        CommentComposer(
+                            text = state.commentInput,
+                            isSending = state.isSendingComment,
+                            feedback = state.commentFeedback,
+                            onTextChange = viewModel::onCommentInputChange,
+                            onSend = viewModel::sendComment,
                         )
                     }
                     if (state.commentsLoading) {
@@ -500,6 +511,81 @@ private fun StatsRow(entry: DynamicEntry, likeCount: Long, liked: Boolean) {
             color = AppTheme.colors.onBackgroundSecondary,
             fontSize = 12.sp,
         )
+    }
+}
+
+/**
+ * The inline comment box.
+ *
+ * Inline rather than a dialog: the page is already a reading surface, and the
+ * send feedback needs somewhere to sit next to the field (a floating strip at
+ * the bottom is exactly what the keyboard covers).
+ */
+@Composable
+private fun CommentComposer(
+    text: String,
+    isSending: Boolean,
+    feedback: String?,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(20.dp)),
+                placeholder = {
+                    Text(
+                        text = "发一条友善的评论",
+                        color = AppTheme.colors.onBackgroundSecondary,
+                        fontSize = 13.sp,
+                    )
+                },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = AppTheme.colors.chipBackground,
+                    unfocusedContainerColor = AppTheme.colors.chipBackground,
+                    focusedTextColor = AppTheme.colors.onBackground,
+                    unfocusedTextColor = AppTheme.colors.onBackground,
+                    cursorColor = YtColors.Red,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+            )
+            Spacer(Modifier.width(8.dp))
+            if (isSending) {
+                CircularProgressIndicator(
+                    color = YtColors.Red,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(20.dp),
+                )
+            } else {
+                Text(
+                    text = "发送",
+                    color = if (text.isBlank()) {
+                        AppTheme.colors.onBackgroundSecondary
+                    } else {
+                        YtColors.Red
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable(enabled = text.isNotBlank(), onClick = onSend)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+        feedback?.let { message ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = message,
+                color = AppTheme.colors.onBackgroundSecondary,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
     }
 }
 

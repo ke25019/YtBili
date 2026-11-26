@@ -179,6 +179,24 @@ fun PlayerScreen(
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
 
+    /**
+     * Leaves the player *without* leaving its last frame on the outgoing screen.
+     *
+     * Popping the destination disposes the `PlayerView` only after the navigation
+     * transition has started, so the surface kept painting the previous frame on
+     * top of 首页 for a moment. Stopping and detaching the video surface first
+     * turns that frame black, which is indistinguishable from the player's own
+     * background.
+     */
+    val exitPlayer: () -> Unit = {
+        runCatching {
+            exoPlayer.pause()
+            exoPlayer.stop()
+            exoPlayer.clearVideoSurface()
+        }
+        onBack()
+    }
+
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -386,6 +404,11 @@ fun PlayerScreen(
      */
     BackHandler(enabled = isFullscreen) { isFullscreen = false }
 
+    // System back outside fullscreen uses the same teardown as the in-app arrow,
+    // so the picture cannot outlive the screen on the way back to 首页. PiP is
+    // excluded: there back belongs to the system, which closes the little window.
+    BackHandler(enabled = !isFullscreen && !inPip) { exitPlayer() }
+
     DisposableEffect(Unit) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -409,9 +432,23 @@ fun PlayerScreen(
              * Playback failures are otherwise invisible: the screen just stays
              * black. The error name and the failing URL's host are what identify
              * a region block, an expired CDN signature or a codec problem.
+             *
+             * Source/IO failures are retried once per mirror first: a node that
+             * answers with an empty body looks like a decoder bug (`index 0,
+             * size 0`) but is just a bad host, and Bilibili returns a backup
+             * list for exactly this case.
              */
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 AppLog.e("player", "playback error ${error.errorCodeName}: ${error.message}", error)
+                val retryable = error.errorCode ==
+                    androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                    error.errorCode ==
+                    androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                    error.errorCode ==
+                    androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                    error.errorCode ==
+                    androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+                if (retryable) viewModel.retryWithBackup()
             }
         }
         exoPlayer.addListener(listener)
@@ -457,6 +494,11 @@ fun PlayerScreen(
      * first tap — on the play button or on the picture — into the load.
      */
     var playbackRequested by remember { mutableStateOf(false) }
+
+    // A new video starts over: the "tap to start" gate and the mobile-data note
+    // belong to *this* stream, not to the screen's lifetime. Without this reset
+    // the second video never asked for a tap again.
+    LaunchedEffect(state.contentKey) { playbackRequested = false }
 
     // Rebuild the media source whenever the resolved tracks *or* the session
     // cookie change; the CDN headers depend on the latter.
@@ -662,7 +704,7 @@ fun PlayerScreen(
                     isFullscreen = false
                     exitLandscapeRequested = true
                 } else {
-                    onBack()
+                    exitPlayer()
                 }
             },
             onCast = {
@@ -901,8 +943,11 @@ fun PlayerScreen(
                 }
 
                 // Explains a paused start: the video is not broken, the
-                // autoplay policy simply declined to spend mobile data.
-                if (state.autoplayBlockedByNetwork) {
+                // autoplay policy simply declined to spend mobile data. It goes
+                // away as soon as this video is actually requested, so the note
+                // cannot outlive the state it describes; the next video shows it
+                // again.
+                if (state.autoplayBlockedByNetwork && !playbackRequested) {
                     Text(
                         text = "当前是移动网络，按「设置 → 播放」的策略没有自动播放，点画面即可开始。",
                         color = AppTheme.colors.onBackgroundSecondary,
@@ -1555,7 +1600,11 @@ private fun PlayerSurface(
         //
         // No inset here: the whole surface is already inset in portrait (see the
         // container above), and in fullscreen the system bars are hidden.
-        if (controlsVisible && !inPip && !isFullscreen) {
+        //
+        // Audio-only is excluded: its own bar already carries a back arrow, and
+        // the chrome drew a *second* one above it on a black strip (the picture
+        // is collapsed to zero height, so this row was all that remained).
+        if (controlsVisible && !inPip && !isFullscreen && !state.audioOnly) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 IconButton(
                     onClick = {
@@ -2397,6 +2446,11 @@ private fun LandscapeChrome(
                     color = Color.White,
                     fontSize = 11.sp,
                     maxLines = 1,
+                    // Fixed width: a growing "9:59" → "10:00" used to steal
+                    // space from the slider and visibly shorten the bar while
+                    // the user was dragging it.
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.width(48.dp),
                 )
                 CompactSlider(
                     value = fraction,
@@ -2420,6 +2474,7 @@ private fun LandscapeChrome(
                     color = Color(0xCCFFFFFF),
                     fontSize = 11.sp,
                     maxLines = 1,
+                    modifier = Modifier.width(48.dp),
                 )
             }
 

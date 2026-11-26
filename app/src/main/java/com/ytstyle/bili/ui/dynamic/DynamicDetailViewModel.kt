@@ -36,6 +36,11 @@ data class DynamicDetailUiState(
     val liked: Boolean = false,
     val likeCount: Long = 0,
     val notice: String? = null,
+    /** The comment being composed. */
+    val commentInput: String = "",
+    val isSendingComment: Boolean = false,
+    /** Result of the last send attempt, shown under the composer. */
+    val commentFeedback: String? = null,
 ) {
     val images: List<String> get() = entry?.imageUrls.orEmpty()
 }
@@ -62,43 +67,85 @@ class DynamicDetailViewModel @Inject constructor(
 
     init {
         val handed = DynamicDetailSelection.entry?.takeIf { it.id == dynId }
-        _state.update { it.copy(entry = handed, likeCount = handed?.likeCount ?: 0L) }
+        _state.update {
+            it.copy(
+                entry = handed,
+                likeCount = handed?.likeCount ?: 0L,
+                // The card already knows whether this account liked the post;
+                // seeding it stops the heart from resetting on every open.
+                liked = handed?.liked == true,
+            )
+        }
         loadDetail()
-        loadComments()
     }
 
     /**
-     * Asks for the full body and keeps whichever version is longer.
+     * Asks for the full body and keeps whichever version is richer.
      *
      * The feed truncates long posts (`展开` on the card) and can omit images, so
      * the answer is worth having; but when it fails or arrives thinner than the
-     * card, the card's copy stays.
+     * card, the card's copy stays. Counters are merged with `max` because the
+     * detail payload does not always carry `module_stat` — replacing the card
+     * wholesale turned "2692 点赞 / 210 评论" into zeros on open.
      */
     private fun loadDetail() {
         viewModelScope.launch {
-            val response = runCatching { api.detail(dynId) }.getOrNull() ?: return@launch
-            if (response.code != 0) return@launch
-            val fetched = parseDynamicDetail(response.data) ?: return@launch
-            _state.update { current ->
-                val shown = current.entry
-                val richer = if (shown == null || fetched.text.length >= shown.text.length) {
-                    fetched
-                } else {
-                    shown
+            val response = runCatching { api.detail(dynId) }.getOrNull()
+            if (response?.code == 0) {
+                val fetched = parseDynamicDetail(response.data)
+                if (fetched != null) {
+                    _state.update { current ->
+                        val merged = mergeEntries(current.entry, fetched)
+                        current.copy(
+                            entry = merged,
+                            likeCount = maxOf(current.likeCount, merged.likeCount),
+                            liked = current.liked || merged.liked,
+                        )
+                    }
                 }
-                current.copy(
-                    entry = richer,
-                    likeCount = maxOf(current.likeCount, richer.likeCount),
-                )
             }
+            // Comments are only requested now: an 图文 dynamic's real comment
+            // target (`basic.comment_type` / `comment_id_str`) arrives with this
+            // payload, and guessing `type=17` before it lands was the `-404`.
+            loadComments()
         }
+    }
+
+    private fun mergeEntries(base: DynamicEntry?, fresh: DynamicEntry): DynamicEntry {
+        if (base == null) return fresh
+        return fresh.copy(
+            text = if (fresh.text.length >= base.text.length) fresh.text else base.text,
+            imageUrls = fresh.imageUrls.ifEmpty { base.imageUrls },
+            videoBvid = fresh.videoBvid.ifBlank { base.videoBvid },
+            videoTitle = fresh.videoTitle.ifBlank { base.videoTitle },
+            videoCover = fresh.videoCover.ifBlank { base.videoCover },
+            forwardText = fresh.forwardText.ifBlank { base.forwardText },
+            forwardImageUrls = fresh.forwardImageUrls.ifEmpty { base.forwardImageUrls },
+            authorName = fresh.authorName.ifBlank { base.authorName },
+            authorFace = fresh.authorFace.ifBlank { base.authorFace },
+            authorMid = fresh.authorMid.takeIf { it > 0 } ?: base.authorMid,
+            pubTimeLabel = fresh.pubTimeLabel.ifBlank { base.pubTimeLabel },
+            likeCount = maxOf(base.likeCount, fresh.likeCount),
+            commentCount = maxOf(base.commentCount, fresh.commentCount),
+            forwardCount = maxOf(base.forwardCount, fresh.forwardCount),
+            liked = base.liked || fresh.liked,
+            commentType = fresh.commentType.takeIf { it > 0 } ?: base.commentType,
+            commentOid = fresh.commentOid.takeIf { it > 0 } ?: base.commentOid,
+        )
     }
 
     private fun loadComments() {
         if (dynId.isBlank()) return
         viewModelScope.launch {
             _state.update { it.copy(commentsLoading = true, commentsError = null) }
-            when (val result = repository.dynamicReplies(dynId)) {
+            val entry = _state.value.entry
+            when (
+                val result = repository.dynamicReplies(
+                    dynId = dynId,
+                    type = entry?.commentType ?: 0,
+                    oid = entry?.commentOid ?: 0L,
+                )
+            ) {
                 is Result.Ok -> _state.update {
                     it.copy(commentsLoading = false, comments = result.value.replies)
                 }
@@ -111,6 +158,54 @@ class DynamicDetailViewModel @Inject constructor(
     }
 
     fun retryComments() = loadComments()
+
+    fun onCommentInputChange(text: String) {
+        _state.update { it.copy(commentInput = text, commentFeedback = null) }
+    }
+
+    /**
+     * Posts the composed comment.
+     *
+     * The server's own reply is prepended rather than a placeholder bubble being
+     * invented: it carries the real `rpid`, timestamp and member card, so it
+     * behaves like every other row immediately.
+     */
+    fun sendComment() {
+        val entry = _state.value.entry ?: return
+        val text = _state.value.commentInput.trim()
+        if (text.isEmpty() || _state.value.isSendingComment) return
+        _state.update { it.copy(isSendingComment = true, commentFeedback = null) }
+        viewModelScope.launch {
+            when (
+                val result = repository.commentDynamic(
+                    dynId = dynId,
+                    message = text,
+                    type = entry.commentType,
+                    oid = entry.commentOid,
+                )
+            ) {
+                is Result.Ok -> _state.update { current ->
+                    val updated = current.entry?.copy(
+                        commentCount = current.entry.commentCount + 1,
+                    )
+                    current.copy(
+                        entry = updated,
+                        comments = listOf(result.value) + current.comments,
+                        commentInput = "",
+                        isSendingComment = false,
+                        commentFeedback = "已发送",
+                    )
+                }
+
+                is Result.Err -> _state.update {
+                    it.copy(
+                        isSendingComment = false,
+                        commentFeedback = result.message,
+                    )
+                }
+            }
+        }
+    }
 
     /**
      * Optimistic like, rolled back with the server's own message.

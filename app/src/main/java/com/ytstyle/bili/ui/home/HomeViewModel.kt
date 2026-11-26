@@ -6,6 +6,7 @@ import com.ytstyle.bili.data.home.HomeFeedCache
 import com.ytstyle.bili.data.net.RegionApi
 import com.ytstyle.bili.data.net.RegionItem
 import com.ytstyle.bili.data.net.RecommendItem
+import com.ytstyle.bili.data.net.supportsRegionFeed
 import com.ytstyle.bili.data.repo.BiliRepository
 import com.ytstyle.bili.data.repo.Result
 import com.ytstyle.bili.data.settings.AVAILABLE_HOME_PARTITIONS
@@ -278,9 +279,9 @@ class HomeViewModel @Inject constructor(
      */
     private suspend fun loadRegion(rid: Int) {
         if (pool == null || poolRid != rid) {
-            when (val result = regionApi.regionRanking(rid)) {
+            when (val result = regionSource(rid)) {
                 is Result.Ok -> {
-                    pool = result.value.list.filter { it.bvid.isNotEmpty() }
+                    pool = result.value.filter { it.bvid.isNotEmpty() }
                     poolRid = rid
                     poolCursor = 0
                 }
@@ -291,7 +292,20 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        val window = nextWindow()
+        var window = nextWindow()
+
+        // The recommendation feed has no cursor: once its page is exhausted, ask
+        // again for a fresh one. That is what makes a partition keep producing
+        // new videos instead of replaying a fixed ranking snapshot.
+        if (window.isEmpty() && supportsRegionFeed(rid) && _state.value.items.isNotEmpty()) {
+            val more = regionApi.regionFeed(rid, requestCount = PAGE_SIZE)
+            if (more is Result.Ok && more.value.isNotEmpty()) {
+                pool = more.value
+                poolRid = rid
+                poolCursor = 0
+                window = nextWindow()
+            }
+        }
 
         AppLog.d("home", "region rid=$rid got=${window.size}")
 
@@ -316,6 +330,26 @@ class HomeViewModel @Inject constructor(
             return
         }
         appendPage(window)
+    }
+
+    /**
+     * The best feed a partition can offer.
+     *
+     * `region/feed/rcmd` is Bilibili's own per-partition recommendation stream
+     * (the one the web channel pages call), so it is preferred wherever it
+     * works. Only the legacy main regions answer it; the rest keep the ranking
+     * snapshot rather than showing an error.
+     */
+    private suspend fun regionSource(rid: Int): Result<List<RegionItem>> {
+        if (supportsRegionFeed(rid)) {
+            val feed = regionApi.regionFeed(rid, requestCount = PAGE_SIZE)
+            if (feed is Result.Ok && feed.value.isNotEmpty()) return feed
+            AppLog.w("home", "region feed rid=$rid failed, using ranking")
+        }
+        return when (val ranking = regionApi.regionRanking(rid)) {
+            is Result.Ok -> Result.Ok(ranking.value.list)
+            is Result.Err -> ranking
+        }
     }
 
     /**

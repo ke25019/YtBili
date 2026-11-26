@@ -228,6 +228,10 @@ private fun DownloadProgress(progress: Float?) {
                 text = progress?.let { "${(it * 100).roundToInt()}%" } ?: "…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Fixed width: "9%" → "100%" changed the text's width and the
+                // bar grew shorter as the download advanced.
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(40.dp),
             )
         }
         Spacer(Modifier.height(2.dp))

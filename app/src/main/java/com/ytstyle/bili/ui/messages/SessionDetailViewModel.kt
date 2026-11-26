@@ -40,6 +40,20 @@ data class SessionDetailUiState(
 )
 
 /**
+ * The session row the user tapped, so the chat page can paint the peer's name
+ * and avatar on its first frame.
+ *
+ * The route carries only the name; the avatar lives on the session row (and may
+ * be absent even there). Handing the row's copy over avoids a blank circle while
+ * the card request is in flight — and keeps the avatar if that request fails.
+ */
+object SessionPeerSelection {
+    var talkerId: Long = 0
+    var name: String = ""
+    var face: String = ""
+}
+
+/**
  * Drives one 私信会话.
  *
  * Paging goes backwards in time only: the first load is the newest page, and
@@ -77,7 +91,12 @@ class SessionDetailViewModel @Inject constructor(
         .takeIf { it != EMPTY_NAME_PLACEHOLDER }
         .orEmpty()
 
-    private val _state = MutableStateFlow(SessionDetailUiState(peerName = peerName))
+    private val _state = MutableStateFlow(
+        SessionDetailUiState(
+            peerName = peerName.ifBlank { SessionPeerSelection.takeIf { it.talkerId == talkerId }?.name.orEmpty() },
+            peerFace = SessionPeerSelection.takeIf { it.talkerId == talkerId }?.face.orEmpty(),
+        ),
+    )
     val state: StateFlow<SessionDetailUiState> = _state.asStateFlow()
 
     /** Cursor for the next (older) page. */

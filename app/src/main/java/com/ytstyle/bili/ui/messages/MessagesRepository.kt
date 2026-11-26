@@ -60,11 +60,17 @@ class MessagesRepository @Inject constructor(
      *
      * The session row already carries these, but the route into a conversation
      * may have been built from a row whose card lookup failed — and a chat page
-     * with no name and no avatar is what "私信无法加载头像和名称" was. Looking it
-     * up here makes the screen self-sufficient.
+     * with no name and no avatar is what "私信无法加载头像和名称" was. The
+     * documented polymer card endpoint is tried first, then the VC-hosted one,
+     * exactly like [withCards]; the previous version only tried the fallback, so
+     * a phone where the polymer call works still showed no peer avatar.
      */
     suspend fun peerCard(talkerId: Long): MsgResult<Pair<String, String>> {
         if (talkerId <= 0) return MsgResult.Err("无效的会话")
+        val polymer = fetchCards("user_cards_polymer") {
+            api.userCardsPolymer(talkerId.toString())
+        }
+        parseUserCard(polymer, talkerId)?.let { return MsgResult.Ok(it) }
         return vcRequest(
             call = "user_cards",
             block = { vcApi.userCards(talkerId.toString()) },

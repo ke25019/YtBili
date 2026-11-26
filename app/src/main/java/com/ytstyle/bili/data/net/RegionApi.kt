@@ -65,6 +65,67 @@ data class RegionNewestResponse(
     val data: RegionNewest? = null,
 )
 
+/**
+ * A recommendation row from `x/web-interface/region/feed/rcmd`.
+ *
+ * The names differ from [RecommendItem] (`cover` rather than `pic`, `author`
+ * rather than `owner`), so the payload is modelled as-is and mapped afterwards.
+ * Bilibili also started requiring a **`buvid3` cookie** for this endpoint in
+ * November 2026: without it every request gets HTTP 412 and an HTML error page.
+ * The shared OkHttp client already attaches the device fingerprint, which is why
+ * this call works without a login.
+ */
+@Serializable
+data class RegionFeedArchive(
+    val aid: Long = 0,
+    val bvid: String = "",
+    val cid: Long = 0,
+    val title: String = "",
+    val cover: String = "",
+    val duration: Int = 0,
+    val pubdate: Long = 0,
+    val stat: RegionFeedStat? = null,
+    val author: RegionFeedAuthor? = null,
+)
+
+@Serializable
+data class RegionFeedStat(
+    val view: Long = 0,
+    val like: Long = 0,
+    val danmaku: Long = 0,
+)
+
+@Serializable
+data class RegionFeedAuthor(
+    val mid: Long = 0,
+    val name: String = "",
+    val face: String = "",
+)
+
+@Serializable
+data class RegionFeedData(
+    val archives: List<RegionFeedArchive> = emptyList(),
+)
+
+@Serializable
+data class RegionFeedResponse(
+    val code: Int = -1,
+    val message: String = "",
+    val data: RegionFeedData? = null,
+)
+
+/**
+ * Which chips get Bilibili's per-partition **recommendation** feed.
+ *
+ * Probed against the live endpoint: only the legacy main regions answer
+ * `region/feed/rcmd` (1 动画, 3 音乐, 4 游戏, 5 娱乐, 36 知识). The rest answer
+ * `62013` (no channel feed) and keep using the ranking snapshot.
+ */
+internal val REGION_FEED_RIDS = setOf(1, 3, 4, 5, 36)
+
+/** True when the partition can supply a changing recommendation list. */
+internal fun supportsRegionFeed(rid: Int): Boolean = rid in REGION_FEED_RIDS
+
 interface RegionService {
     /** @param rid Bilibili's region id (1 = 动画, 4 = 游戏, …). */
     @GET("x/web-interface/ranking/v2")
@@ -80,6 +141,22 @@ interface RegionService {
         @Query("pn") pn: Int = 1,
         @Query("ps") ps: Int = 20,
     ): RegionNewestResponse
+
+    /**
+     * A partition's recommendation feed.
+     *
+     * `from_region` is required — the endpoint answers `-400` without it — and
+     * `display_id` is the legacy region id, not the new `tid_v2`.
+     */
+    @GET("x/web-interface/region/feed/rcmd")
+    suspend fun regionFeed(
+        @Query("display_id") displayId: Int,
+        @Query("request_cnt") requestCount: Int = 20,
+        @Query("from_region") fromRegion: Int = 1005,
+        @Query("device") device: String = "web",
+        @Query("plat") plat: Int = 30,
+        @Query("web_location") webLocation: String = "333.999",
+    ): RegionFeedResponse
 }
 
 /**
@@ -116,22 +193,27 @@ class RegionApi @Inject constructor(
     }
 
     /**
-     * The partition's newest uploads.
+     * The partition's recommendation feed, mapped onto the card model.
      *
-     * Failure is not fatal at the call site: the home screen treats an empty
-     * result as "keep the ranking feed", so a broken endpoint cannot take the
-     * partition down with it.
+     * This is the list the web channel pages use: it changes between requests,
+     * unlike `ranking/v2`, which is a daily snapshot. Empty/`62013` answers are
+     * errors rather than an empty page, because the caller has a ranking to fall
+     * back to.
      */
-    suspend fun regionNewest(rid: Int, page: Int = 1): Result<List<RegionItem>> =
+    suspend fun regionFeed(rid: Int, requestCount: Int = 20): Result<List<RegionItem>> =
         withContext(Dispatchers.IO) {
             try {
-                val response = service.regionNewest(rid = rid, pn = page)
-                val payload = response.data
-                if (response.code == 0 && payload != null) {
-                    Result.Ok(payload.archives.filter { it.bvid.isNotEmpty() })
+                val response = service.regionFeed(displayId = rid, requestCount = requestCount)
+                val archives = response.data?.archives.orEmpty()
+                if (response.code == 0) {
+                    Result.Ok(
+                        archives.mapNotNull { archive ->
+                            archive.toCard()
+                        },
+                    )
                 } else {
                     Result.Err(
-                        response.message.ifBlank { "分区最新加载失败 (code=${response.code})" },
+                        response.message.ifBlank { "分区推荐加载失败 (code=${response.code})" },
                         response.code,
                     )
                 }
@@ -139,6 +221,25 @@ class RegionApi @Inject constructor(
                 Result.Err(e.message ?: "网络异常，请稍后重试")
             }
         }
+
+    /** Names differ from [RecommendItem]; this is the one place they are bridged. */
+    private fun RegionFeedArchive.toCard(): RegionItem? {
+        if (bvid.isBlank()) return null
+        return RecommendItem(
+            id = aid,
+            bvid = bvid,
+            cid = cid,
+            goto = "av",
+            pic = cover,
+            title = title,
+            duration = duration,
+            pubdate = pubdate,
+            owner = author?.let { Owner(mid = it.mid, name = it.name, face = it.face) },
+            stat = stat?.let {
+                Stat(view = it.view, like = it.like, danmaku = it.danmaku)
+            },
+        )
+    }
 }
 
 @Module

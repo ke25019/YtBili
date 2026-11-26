@@ -127,7 +127,13 @@ private fun sessionMessage(row: JsonObject, selfUid: Long): SessionMessage? {
 
         2, 6 -> base.copy(
             kind = SessionMessageKind.IMAGE,
-            imageUrl = content.str("url").ifBlank { content.str("thumb") },
+            // `url` is the documented key; clients have also written `origin`,
+            // `image_url` and only `thumb`, so every name is tried before the
+            // message is given up as unrenderable.
+            imageUrl = content.str("url")
+                .ifBlank { content.str("origin") }
+                .ifBlank { content.str("image_url") }
+                .ifBlank { content.str("thumb") },
             imageWidth = content.int("width"),
             imageHeight = content.int("height"),
         )

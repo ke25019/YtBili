@@ -248,9 +248,22 @@ class BiliRepository @Inject constructor(
      * as the oid. The WBI signature is already applied inside [replies], which is
      * required by `x/v2/reply/wbi/main` regardless of the object type.
      */
-    suspend fun dynamicReplies(dynId: String, page: Int = 1): Result<ReplyListData> {
-        val oid = dynId.toLongOrNull() ?: return Result.Err("动态 id 无法解析")
-        return replies(oid = oid, page = page, mode = 3, type = 17)
+    suspend fun dynamicReplies(
+        dynId: String,
+        page: Int = 1,
+        type: Int = DYNAMIC_OID_TYPE,
+        oid: Long = 0L,
+    ): Result<ReplyListData> {
+        // `basic.comment_id_str` is the real target for 图文/专栏 dynamics;
+        // dynId is only the fallback for the plain `type=17` case.
+        val target = oid.takeIf { it > 0 } ?: dynId.toLongOrNull()
+        if (target == null) return Result.Err("动态 id 无法解析")
+        return replies(
+            oid = target,
+            page = page,
+            mode = 3,
+            type = type.takeIf { it > 0 } ?: DYNAMIC_OID_TYPE,
+        )
     }
 
     /**
@@ -968,9 +981,19 @@ class BiliRepository @Inject constructor(
      * Comments on a dynamic: the comment endpoint with `type = 17`, which is
      * the kind Bilibili assigns to 动态 `oid`s.
      */
-    suspend fun commentDynamic(dynId: String, message: String): Result<Reply> {
-        val oid = dynId.toLongOrNull() ?: return Result.Err("动态 id 无法解析")
-        return addReply(oid = oid, message = message, type = DYNAMIC_OID_TYPE)
+    suspend fun commentDynamic(
+        dynId: String,
+        message: String,
+        type: Int = 0,
+        oid: Long = 0L,
+    ): Result<Reply> {
+        val target = oid.takeIf { it > 0 } ?: dynId.toLongOrNull()
+            ?: return Result.Err("动态 id 无法解析")
+        return addReply(
+            oid = target,
+            message = message,
+            type = type.takeIf { it > 0 } ?: DYNAMIC_OID_TYPE,
+        )
     }
 
     // ---- login ----

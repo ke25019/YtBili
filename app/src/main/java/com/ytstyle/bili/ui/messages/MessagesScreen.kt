@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -87,6 +88,10 @@ fun MessagesScreen(
 ) {
     val viewModel: MessagesViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Coming back from a conversation re-enters this composition; refresh so the
+    // unread badges reflect the `update_ack` the chat page just sent.
+    LaunchedEffect(Unit) { viewModel.onScreenShown() }
 
     Column(
         modifier = Modifier
@@ -317,6 +322,12 @@ private fun SessionList(
                     // fan club, which is exactly what the history endpoint
                     // wants — unlike the list's `session_type` filter.
                     if (session.talkerId > 0) {
+                        // Hand the row's name/avatar over so the chat page has
+                        // both before its own card request answers (or ever
+                        // does — that lookup is cosmetic and may fail).
+                        SessionPeerSelection.talkerId = session.talkerId
+                        SessionPeerSelection.name = session.name
+                        SessionPeerSelection.face = session.face
                         onOpenSession(
                             session.talkerId,
                             if (session.isGroup) 2 else 1,

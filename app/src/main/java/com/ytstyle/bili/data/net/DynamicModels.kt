@@ -50,6 +50,23 @@ data class DynamicEntry(
     val likeCount: Long = 0,
     val commentCount: Long = 0,
     val forwardCount: Long = 0,
+    /**
+     * Whether the signed-in user already liked this dynamic.
+     *
+     * Comes from `module_stat.like.status`; without it the page opened with an
+     * empty heart on a post the user had liked.
+     */
+    val liked: Boolean = false,
+    /**
+     * Where the comments actually live.
+     *
+     * `basic.comment_type` + `basic.comment_id_str` (or `rid_str`) are supplied
+     * per item and are **not** always `17` / the dynamic id: an 图文/专栏
+     * dynamic carries `comment_type = 12` and its article `rid`. Hard-coding
+     * `type = 17, oid = dynId` made those pages answer `-404 啥都木有`.
+     */
+    val commentType: Int = 0,
+    val commentOid: Long = 0,
 )
 
 /** A followed uploader in the left rail. */
@@ -175,6 +192,7 @@ private fun dynamicEntryOf(item: JsonObject): DynamicEntry? {
     }
 
     val stat = modules.obj("module_stat")
+    val basic = item.obj("basic")
     val articleCovers = article?.arr("covers")
     return DynamicEntry(
         id = id,
@@ -204,6 +222,10 @@ private fun dynamicEntryOf(item: JsonObject): DynamicEntry? {
         likeCount = stat?.obj("like")?.long("count") ?: 0L,
         commentCount = stat?.obj("comment")?.long("count") ?: 0L,
         forwardCount = stat?.obj("forward")?.long("count") ?: 0L,
+        liked = stat.obj("like").bool("status"),
+        commentType = basic.long("comment_type").toInt(),
+        commentOid = basic.long("comment_id_str").takeIf { it > 0 }
+            ?: basic.long("rid_str"),
     )
 }
 

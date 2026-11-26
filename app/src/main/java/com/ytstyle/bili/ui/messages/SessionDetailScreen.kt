@@ -32,7 +32,9 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.ytstyle.bili.ui.components.ImageViewer
 import com.ytstyle.bili.ui.components.relativeTime
 import com.ytstyle.bili.ui.components.toSecureUrl
 import com.ytstyle.bili.ui.components.toThumbUrl
@@ -68,6 +71,9 @@ fun SessionDetailScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    /** The image message the user tapped, shown in the full-screen viewer. */
+    var viewerImage by remember { mutableStateOf<String?>(null) }
 
     // Jump to the newest message once the first page has landed. Prepending
     // older pages must not move the view, so this only fires while the size
@@ -144,6 +150,7 @@ fun SessionDetailScreen(
                         selfName = state.selfName,
                         selfFace = state.selfFace,
                         onOpenVideo = onOpenVideo,
+                        onOpenImage = { url -> if (url.isNotBlank()) viewerImage = url },
                     )
                 }
             }
@@ -164,6 +171,12 @@ fun SessionDetailScreen(
                 onSend = viewModel::send,
             )
         }
+    }
+
+    // Full-screen viewer for a tapped picture. A Dialog, so it can live here
+    // without the chat's Column having to become a Box.
+    viewerImage?.let { url ->
+        ImageViewer(urls = listOf(url), onDismiss = { viewerImage = null })
     }
 }
 
@@ -296,6 +309,7 @@ private fun MessageBubble(
     selfName: String,
     selfFace: String,
     onOpenVideo: (String) -> Unit,
+    onOpenImage: (String) -> Unit,
 ) {
     if (message.kind == SessionMessageKind.SYSTEM || message.kind == SessionMessageKind.RECALLED) {
         Box(
@@ -350,15 +364,24 @@ private fun MessageBubble(
             horizontalAlignment = if (message.outgoing) Alignment.End else Alignment.Start,
         ) {
             when (message.kind) {
-                SessionMessageKind.IMAGE -> AsyncImage(
-                    model = message.imageUrl.toThumbUrl(),
-                    contentDescription = "图片消息",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .widthIn(max = 220.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AppTheme.colors.surfaceElevated),
-                )
+                SessionMessageKind.IMAGE -> if (message.imageUrl.isBlank()) {
+                    Text(
+                        text = "图片消息",
+                        color = contentColor.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                    )
+                } else {
+                    AsyncImage(
+                        model = message.imageUrl.toThumbUrl(),
+                        contentDescription = "图片消息",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .widthIn(max = 220.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AppTheme.colors.surfaceElevated)
+                            .clickable { onOpenImage(message.imageUrl) },
+                    )
+                }
 
                 SessionMessageKind.SHARE -> ShareCard(
                     message = message,

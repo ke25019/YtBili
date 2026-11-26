@@ -303,6 +303,17 @@ class PlayerViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlayerUiState(isPgc = isPgcRequest))
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
+    /**
+     * Which `baseUrl`/`backupUrl` mirror is currently in use.
+     *
+     * Bilibili resolves one primary node plus a short backup list per track; a
+     * node occasionally answers 200 with an empty body, which surfaces as an
+     * `ERROR_CODE_IO_UNSPECIFIED` source error. Rotating to the next mirror
+     * fixes exactly the "some videos only play after changing quality" report,
+     * because changing quality happens to fetch a fresh node list.
+     */
+    private var mirrorIndex = 0
+
     /** Exposed to the player so progress can be reported back for resume. */
     var lastPositionMs: Long = 0L
         private set
@@ -849,6 +860,8 @@ class PlayerViewModel @Inject constructor(
             is Result.Ok -> {
                 val data = result.value
                 val dash = data.dash
+                // A fresh resolution starts from the primary CDN node again.
+                mirrorIndex = 0
 
                 // Pick within the tier Bilibili actually returned. Asking for
                 // 1080P on a video that only offers 480P silently yields 480P,
@@ -898,6 +911,38 @@ class PlayerViewModel @Inject constructor(
             tracks.firstOrNull { it.id == preferred }?.let { return it }
         }
         return tracks.maxByOrNull { it.bandwidth }
+    }
+
+    /**
+     * Switches both tracks to their next CDN mirror after a source failure.
+     *
+     * Returns false once every candidate has been tried, so the screen can stop
+     * retrying and show the error instead of looping. Playback position is kept:
+     * the stream is the same content, only its host changed.
+     */
+    fun retryWithBackup(): Boolean {
+        val video = _state.value.videoTrack ?: return false
+        val videoUrls = (listOf(video.baseUrl) + video.backupUrl).filter { it.isNotBlank() }
+        val next = mirrorIndex + 1
+        if (next >= videoUrls.size) return false
+        mirrorIndex = next
+
+        val audio = _state.value.audioTrack
+        val audioUrls = audio?.let {
+            (listOf(it.baseUrl) + it.backupUrl).filter { url -> url.isNotBlank() }
+        }.orEmpty()
+
+        _state.update {
+            it.copy(
+                videoTrack = video.copy(baseUrl = videoUrls[next]),
+                audioTrack = audio?.let { track ->
+                    val url = audioUrls.getOrNull(next) ?: audioUrls.firstOrNull() ?: track.baseUrl
+                    track.copy(baseUrl = url)
+                },
+                error = null,
+            )
+        }
+        return true
     }
 
     private fun applyDanmaku(result: Result<List<DanmakuItem>>) {
