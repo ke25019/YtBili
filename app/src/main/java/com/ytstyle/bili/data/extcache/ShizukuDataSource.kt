@@ -7,6 +7,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import com.ytstyle.bili.data.log.AppLog
 import java.io.IOException
 import java.io.InputStream
 
@@ -37,12 +38,22 @@ class ShizukuDataSource(
     override fun open(dataSpec: DataSpec): Long {
         close()
 
-        val service = shell.serviceNow() ?: throw IOException("Shizuku 服务未连接")
-        val total = runCatching { service.length(path) }.getOrDefault(-1L)
-        if (total <= 0) throw IOException("无法读取缓存文件")
+        val service = shell.serviceNow()
+            ?: throw IOException("Shizuku 服务未连接（可在设置里重新授权）")
+        val total = runCatching { service.length(path) }.getOrElse { error ->
+            throw IOException("Shizuku 读取长度失败: ${error.javaClass.simpleName}", error)
+        }
+        if (total <= 0) throw IOException("无法读取缓存文件（长度 $total）")
 
         val start = dataSpec.position.coerceIn(0L, total)
-        descriptor = service.openAt(path, start)
+        descriptor = try {
+            service.openAt(path, start)
+        } catch (error: Throwable) {
+            throw IOException(
+                "Shizuku 打开缓存失败: ${error.javaClass.simpleName}: ${error.message}",
+                error,
+            )
+        }
         input = ParcelFileDescriptor.AutoCloseInputStream(descriptor)
 
         uri = dataSpec.uri
@@ -53,6 +64,10 @@ class ShizukuDataSource(
         }
         started = true
         transferStarted(dataSpec)
+        AppLog.d(
+            "shizuku",
+            "open ${path.substringAfterLast('/')} pos=$start len=$bytesRemaining total=$total",
+        )
         return bytesRemaining
     }
 

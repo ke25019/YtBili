@@ -61,10 +61,14 @@ enum class ReplySort(val mode: Int, val label: String) {
 enum class Quality(val qn: Int, val label: String, val height: Int) {
     Q8K(127, "8K", 4320),
     Q4K(120, "4K", 2160),
-    Q1080P60(116, "1080P60", 1080),
-    Q1080PPlus(112, "1080P+", 1080),
+    // The three 1080P rows are different streams, not duplicates: 116 is 60fps,
+    // 112 is the higher-bitrate "高码率" tier, 80 is the ordinary one. Bilibili's
+    // own picker labels them exactly like this; the old labels ("1080P60" /
+    // "1080P+") made them look like a bug.
+    Q1080P60(116, "1080P 60帧", 1080),
+    Q1080PPlus(112, "1080P 高码率", 1080),
     Q1080P(80, "1080P", 1080),
-    Q720P60(74, "720P60", 720),
+    Q720P60(74, "720P 60帧", 720),
     Q720P(64, "720P", 720),
     Q480P(32, "480P", 480),
     Q360P(16, "360P", 360);

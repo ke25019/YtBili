@@ -151,13 +151,27 @@ class ShizukuShell @Inject constructor(
         }.getOrDefault(false)
         if (!authorized) return null
 
-        serviceFlow.value?.let { return it }
+        // A cached proxy can outlive its process: Shizuku does not always call
+        // `onServiceDisconnected` promptly, and using a dead binder throws
+        // DeadObjectException deep inside ExoPlayer (which surfaces as a
+        // generic IO error). Check liveness before trusting it.
+        val existing = serviceFlow.value
+        if (existing != null && isAlive(existing)) return existing
+        if (existing != null) {
+            serviceFlow.value = null
+            _state.update { it.copy(connected = false, identity = "") }
+        }
+
         bind()
-        return withTimeoutOrNull(timeoutMs) { serviceFlow.first { it != null } }
+        val connected = withTimeoutOrNull(timeoutMs) { serviceFlow.first { it != null } }
+        return connected?.takeIf { isAlive(it) }
     }
 
     /** Non-suspending accessor for the media data source. */
-    fun serviceNow(): IExtCacheService? = serviceFlow.value
+    fun serviceNow(): IExtCacheService? = serviceFlow.value?.takeIf { isAlive(it) }
+
+    private fun isAlive(service: IExtCacheService): Boolean =
+        runCatching { service.asBinder().isBinderAlive }.getOrDefault(false)
 
     private fun bind() {
         if (serviceFlow.value != null) return

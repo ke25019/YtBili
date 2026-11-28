@@ -40,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,8 +52,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import com.ytstyle.bili.ui.components.toThumbUrl
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -79,6 +83,7 @@ import com.ytstyle.bili.ui.theme.AppTheme
 import com.ytstyle.bili.ui.theme.YtColors
 import kotlinx.coroutines.delay
 import java.io.File
+import java.io.FileInputStream
 import java.util.Locale
 
 /**
@@ -98,6 +103,8 @@ fun OfflinePlayerScreen(
     viewModel: OfflinePlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val copying by viewModel.copying.collectAsStateWithLifecycle()
+    val copyError by viewModel.copyError.collectAsStateWithLifecycle()
     val item = state.item
     // Checked once per item: the first frame must not block on file IO.
     // A Shizuku item's path belongs to another app and `File.exists()` is
@@ -142,6 +149,10 @@ fun OfflinePlayerScreen(
                     others = state.others,
                     onSelect = viewModel::select,
                     shizuku = viewModel.shizuku,
+                    copying = copying,
+                    copyError = copyError,
+                    onCopyToLocal = { viewModel.copyToLocal(item) },
+                    onDismissCopyError = viewModel::dismissCopyError,
                 )
             }
         }
@@ -156,6 +167,10 @@ private fun OfflinePlayerContent(
     others: List<DownloadItem>,
     onSelect: (String) -> Unit,
     shizuku: ShizukuShell,
+    copying: Boolean,
+    copyError: String?,
+    onCopyToLocal: () -> Unit,
+    onDismissCopyError: () -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -223,6 +238,8 @@ private fun OfflinePlayerContent(
 
     /** Set when a Shizuku-backed item cannot be opened at all. */
     var playbackError by remember { mutableStateOf<String?>(null) }
+    /** Bumped by 重试; part of the source effect's key. */
+    var reloadKey by remember { mutableIntStateOf(0) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -240,7 +257,11 @@ private fun OfflinePlayerContent(
                 // Only the Shizuku-backed rows need an explanation: a local file
                 // that failed is already reported by the playlist itself.
                 if (item.externalShell) {
-                    playbackError = "无法读取缓存（${error.errorCodeName}）"
+                    val detail = generateSequence(error.cause) { it.cause }
+                        .mapNotNull { it.message }
+                        .firstOrNull { it.isNotBlank() }
+                    playbackError = "无法读取缓存（${error.errorCodeName}）" +
+                        (detail?.let { "：$it" } ?: "")
                 }
             }
         }
@@ -249,7 +270,7 @@ private fun OfflinePlayerContent(
     }
 
     /** Builds the merged source from the two tracks. Runs once per item. */
-    LaunchedEffect(item.id, item.videoPath, item.audioPath, item.externalShell) {
+    LaunchedEffect(item.id, item.videoPath, item.audioPath, item.externalShell, reloadKey) {
         val videoSource: androidx.media3.exoplayer.source.MediaSource
         val audioSource: androidx.media3.exoplayer.source.MediaSource?
 
@@ -260,6 +281,20 @@ private fun OfflinePlayerContent(
             val service = shizuku.awaitService()
             if (service == null) {
                 playbackError = "Shizuku 未连接，无法读取官方缓存"
+                return@LaunchedEffect
+            }
+            playbackError = null
+            // Pre-flight: open the descriptor and read a few bytes before handing
+            // the path to ExoPlayer. If the user service is stale or the path is
+            // gone, this reports the real cause instead of a generic IO error.
+            val probe = runCatching {
+                service.openAt(item.videoPath, 0).use { descriptor ->
+                    FileInputStream(descriptor.fileDescriptor).use { it.read(ByteArray(16)) }
+                }
+            }
+            if (probe.isFailure) {
+                playbackError = "无法读取缓存：" +
+                    (probe.exceptionOrNull()?.message ?: "未知错误")
                 return@LaunchedEffect
             }
             videoSource = ProgressiveMediaSource.Factory(
@@ -363,20 +398,64 @@ private fun OfflinePlayerContent(
             )
 
             // Shizuku could not hand over a descriptor: say so instead of a
-            // permanently black picture.
+            // permanently black picture, and offer a reconnect + retry.
             playbackError?.let { message ->
-                Text(
-                    text = message,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
+                Column(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(horizontal = 24.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xCC000000))
                         .padding(horizontal = 14.dp, vertical = 10.dp),
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = message,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "重试",
+                            color = Color(0xFFFF6B6B),
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    playbackError = null
+                                    shizuku.refresh()
+                                    reloadKey++
+                                }
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                        if (item.externalShell) {
+                            Text(
+                                text = if (copying) "正在复制…" else "复制到本机后播放",
+                                color = if (copying) Color(0x99FFFFFF) else Color(0xFFFFD166),
+                                fontSize = 13.sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !copying, onClick = onCopyToLocal)
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                    copyError?.let { error ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "复制失败：$error",
+                            color = Color(0xFFFF9A9A),
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onDismissCopyError)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
             }
 
             // Landscape 选集: the same panel idea as the streaming player's episode
@@ -545,7 +624,11 @@ private fun OfflinePlayerContent(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = listOf(item.videoLabel, item.audioLabel, formatBytes(item.totalBytes))
+                    text = (
+                        listOf(item.videoLabel, item.audioLabel) +
+                            listOf(formatBytes(item.totalBytes)) +
+                            listOfNotNull("Shizuku 直读".takeIf { item.externalShell })
+                        )
                         .filter { it.isNotEmpty() }
                         .joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,
@@ -565,17 +648,41 @@ private fun OfflinePlayerContent(
                         color = AppTheme.colors.onBackground,
                     )
                     others.forEach { other ->
-                        Text(
-                            text = other.title.ifBlank { other.bvid },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AppTheme.colors.onBackground,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onSelect(other.id) }
-                                .padding(vertical = 10.dp),
-                        )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AsyncImage(
+                                model = other.cover.toThumbUrl(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(width = 96.dp, height = 54.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF222222)),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = other.title.ifBlank { other.bvid },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = AppTheme.colors.onBackground,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = listOf(other.videoLabel, formatBytes(other.totalBytes))
+                                        .filter { it.isNotEmpty() }
+                                        .joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AppTheme.colors.onBackgroundSecondary,
+                                )
+                            }
+                        }
                     }
                 }
             }

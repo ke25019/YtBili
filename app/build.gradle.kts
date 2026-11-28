@@ -141,13 +141,14 @@ android {
         // experimental cache reader gained a Shizuku mode that reads the official
         // client's files through Binder file descriptors — no copy, and no "all
         // files access" permission. Version chosen by the user.
-        // 1.14.1-beta.1: local-only follow-up (not pushed): the 私信 list no
-        // longer falls back to the notification feed when `get_sessions` hits a
-        // rate limit — that feed looks like a friend list but its rows open the
-        // @-notification's video — and the landscape like/coin counts are no
-        // longer clipped by a fixed 40dp button.
-        versionCode = 34
-        versionName = "1.14.1-beta.1"
+        // 1.14.2-beta: offline-cache playback now checks the Shizuku service is
+        // alive before opening a descriptor, reports the real failure instead of
+        // a generic IO error, offers a one-time "copy to this device" fallback,
+        // and the 其他缓存 list shows covers. The 1080P+ / 1080P60 tiers are
+        // labelled the way the official app labels them. Version chosen by the
+        // user.
+        versionCode = 35
+        versionName = "1.14.2-beta"
 
         vectorDrawables { useSupportLibrary = true }
     }

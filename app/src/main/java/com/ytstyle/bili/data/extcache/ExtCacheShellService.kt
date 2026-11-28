@@ -59,12 +59,32 @@ class ExtCacheShellService : IExtCacheService.Stub {
         if (offset > 0) {
             try {
                 Os.lseek(descriptor.fileDescriptor, offset, OsConstants.SEEK_SET)
-            } catch (error: Throwable) {
-                runCatching { descriptor.close() }
-                throw error
+            } catch (seekError: Throwable) {
+                // Some emulated-storage descriptors refuse `lseek`; seek by
+                // reading instead. It is slower for a far offset but the only
+                // alternative is a failed playback, and the media data source
+                // only seeks when ExoPlayer jumps.
+                val skipped = runCatching { skipByReading(descriptor, offset) }
+                if (skipped.isFailure) {
+                    runCatching { descriptor.close() }
+                    throw seekError
+                }
             }
         }
         return descriptor
+    }
+
+    /** Reads and discards [offset] bytes, leaving the descriptor positioned. */
+    private fun skipByReading(descriptor: ParcelFileDescriptor, offset: Long) {
+        val buffer = ByteArray(64 * 1024)
+        var remaining = offset
+        val fd = descriptor.fileDescriptor
+        while (remaining > 0) {
+            val wanted = minOf(buffer.size.toLong(), remaining).toInt()
+            val read = Os.read(fd, buffer, 0, wanted)
+            if (read <= 0) throw IllegalStateException("无法定位缓存文件（跳读失败）")
+            remaining -= read
+        }
     }
 
     override fun identity(): String =
